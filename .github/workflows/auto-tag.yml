@@ -1,10 +1,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# auto-tag.yml — Автоматически создаёт тег при изменении version.json в main
+# auto-tag.yml — Автоматически вычисляет версию и создаёт тег при пуше в main
 #
-# Если version в version.json выше последнего тега — создаёт и пушит тег,
-# что запускает release.yml.
+# Правила bump по префиксам коммитов (SemVer A.B.C):
+#   new: / feat!: / BREAKING CHANGE → A (мажорная, сброс B и C)
+#   feat:                           → B (минорная, сброс C)
+#   fix: / refactor:                → C (патч)
+#   chore: / ci: / docs: / style:   → без изменений
 #
-# Пропускает коммиты от github-actions[bot] (бамп версии из release.yml).
+# Пропускает коммиты от github-actions[bot].
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: "🏷️ Auto Tag"
@@ -12,15 +15,19 @@ name: "🏷️ Auto Tag"
 on:
   push:
     branches: [main]
-    paths:
-      - version.json
+    paths-ignore:
+      - "version.json"
+      - "*.md"
+      - ".gitignore"
+      - "LICENSE"
+      - ".github/workflows/**"
 
 permissions:
   contents: write
 
 jobs:
   auto-tag:
-    name: "Create tag if version bumped"
+    name: "Bump version and create tag"
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
 
@@ -31,18 +38,83 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check and create tag
+      - name: Calculate version bump and create tag
         run: |
-          VERSION=$(python3 -c "import json; print(json.load(open('version.json'))['version'])")
-          TAG="v$VERSION"
+          python3 -u - <<'PYEOF'
+          import json, re, subprocess, sys
 
-          if git tag --list | grep -qx "$TAG"; then
-            echo "Тег $TAG уже существует — пропускаем."
-          else
-            echo "Создаём тег $TAG..."
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG"
-            git push origin "$TAG"
-            echo "Тег $TAG создан и запущен release workflow."
-          fi
+          def run(cmd):
+              return subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+
+          # Последний тег вида vX.Y.Z
+          tags = [t for t in run(["git", "tag", "--sort=-v:refname"]).splitlines()
+                  if re.match(r"^v\d+\.\d+\.\d+$", t)]
+          last_tag = tags[0] if tags else None
+
+          # Коммиты с момента последнего тега
+          log_range = [f"{last_tag}..HEAD"] if last_tag else []
+          commits = run(["git", "log", "--pretty=format:%s"] + log_range).splitlines()
+
+          if not commits or commits == [""]:
+              print("Нет новых коммитов — пропускаем.")
+              sys.exit(0)
+
+          # Определяем тип bump
+          bump = None
+          MAJOR = re.compile(r"^(new|feat!)[\s:!]|breaking.change", re.I)
+          MINOR = re.compile(r"^feat[\s:]", re.I)
+          PATCH = re.compile(r"^(fix|refactor)[\s:]", re.I)
+
+          for msg in commits:
+              if MAJOR.match(msg):
+                  bump = "major"
+                  break
+              elif MINOR.match(msg) and bump != "major":
+                  bump = "minor"
+              elif PATCH.match(msg) and bump not in ("major", "minor"):
+                  bump = "patch"
+
+          if not bump:
+              print("Только служебные коммиты — версия не меняется.")
+              sys.exit(0)
+
+          # Текущая версия
+          with open("version.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          major, minor, patch = map(int, data["version"].split("."))
+
+          if bump == "major":
+              major += 1; minor = 0; patch = 0
+          elif bump == "minor":
+              minor += 1; patch = 0
+          else:
+              patch += 1
+
+          new_version = f"{major}.{minor}.{patch}"
+          new_tag = f"v{new_version}"
+
+          # Проверяем, нет ли уже такого тега
+          if new_tag in (run(["git", "tag", "--list"]).splitlines()):
+              print(f"Тег {new_tag} уже существует — пропускаем.")
+              sys.exit(0)
+
+          print(f"Bump: {data['version']} → {new_version} ({bump})")
+
+          # Обновляем version.json
+          data["version"] = new_version
+          with open("version.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, indent=2, ensure_ascii=False)
+              f.write("\n")
+
+          # Коммитим и пушим тег
+          subprocess.run(["git", "config", "user.name",  "github-actions[bot]"])
+          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"])
+          subprocess.run(["git", "add", "version.json"])
+          subprocess.run(["git", "commit", "-m", f"chore: bump version to {new_version}"])
+          subprocess.run(["git", "push", "origin", "HEAD:main"])
+          subprocess.run(["git", "tag", new_tag])
+          subprocess.run(["git", "push", "origin", new_tag])
+
+          print(f"✅ Тег {new_tag} создан — запущен release workflow.")
+          PYEOF

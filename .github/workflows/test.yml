@@ -12,8 +12,20 @@ name: "🧪 Tests"
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "version.json"
+      - "*.md"
+      - ".gitignore"
+      - "LICENSE"
+      - ".github/workflows/**"
   pull_request:
     branches: [main]
+    paths-ignore:
+      - "version.json"
+      - "*.md"
+      - ".gitignore"
+      - "LICENSE"
+      - ".github/workflows/**"
 
 permissions:
   contents: read
