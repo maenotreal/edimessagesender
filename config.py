@@ -39,6 +39,7 @@ config.py – загрузка и сохранение конфигурации 
 }
 """
 
+import copy
 import json
 import sys
 import logging
@@ -122,7 +123,6 @@ def save(cfg: dict) -> None:
 
 def create_default() -> dict:
     """Создать файл конфига со значениями по умолчанию и вернуть его."""
-    import copy
     cfg = copy.deepcopy(DEFAULT_CONFIG)
     save(cfg)
     return cfg
