@@ -169,9 +169,18 @@ jobs:
           PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | sed -n '2p')
 
           if [ -z "$PREV_TAG" ]; then
-            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" HEAD)
+            RAW_COMMITS=$(git log --oneline --pretty=format:"%s (%h)" HEAD)
           else
-            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)
+            RAW_COMMITS=$(git log --oneline --pretty=format:"%s (%h)" "$PREV_TAG"..HEAD)
+          fi
+
+          # Фильтруем служебные коммиты: chore, ci, docs, readme, gitignore, bump version
+          COMMITS=$(echo "$RAW_COMMITS" | grep -viE \
+            '^(chore|ci|docs|style|test|build)\b|bump version|\.gitignore|readme' \
+            | sed 's/^/- /')
+
+          if [ -z "$COMMITS" ]; then
+            COMMITS="- Технические улучшения и исправления"
           fi
 
           {
