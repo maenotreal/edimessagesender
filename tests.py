@@ -9,6 +9,7 @@ tests.py — unit-тесты для EDI Message Sender.
 
 import base64
 import copy
+import io
 import json
 import logging
 import sys
@@ -1045,8 +1046,11 @@ class TestUpdater(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.base = Path(self.tmp.name)
         self._orig_vf = updater.VERSION_FILE
+        self._stdout_patch = patch("sys.stdout", new_callable=io.StringIO)
+        self._stdout_patch.start()
 
     def tearDown(self):
+        self._stdout_patch.stop()
         self.up.VERSION_FILE = self._orig_vf
         self.tmp.cleanup()
 
