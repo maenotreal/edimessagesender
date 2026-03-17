@@ -116,6 +116,8 @@ jobs:
               'TestApi',
               'TestUpdater',
               'TestIntegration',
+              'TestVersionJson',
+              'TestValidateGln',
           ]
 
           GROUP_NAMES = {
@@ -127,6 +129,8 @@ jobs:
               'TestApi':           '\U0001f310 API \u2014 \u041a\u043b\u0438\u0435\u043d\u0442 EDI API',
               'TestUpdater':       '\U0001f504 Updater \u2014 \u0410\u0432\u0442\u043e\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435',
               'TestIntegration':   '\U0001f517 Integration \u2014 \u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0435 \u0442\u0435\u0441\u0442\u044b',
+              'TestVersionJson':   '\U0001f4cb VersionJson \u2014 \u0421\u0442\u0440\u0443\u043a\u0442\u0443\u0440\u0430 version.json',
+              'TestValidateGln':   '\U0001f4cd ValidateGln \u2014 \u0412\u0430\u043b\u0438\u0434\u0430\u0446\u0438\u044f GLN',
           }
 
           groups = {}
