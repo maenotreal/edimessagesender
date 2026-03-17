@@ -276,7 +276,7 @@ def _poll_inbox(order: dict, cfg: AppConfig, token: str) -> tuple[int, int]:
         batch = get_events_from(box_id, cfg, token, dl, from_date=from_date)
         all_events.extend(batch.get("Events") or [])
         last_id = batch.get("LastEventId", "")
-        while last_id and len(batch.get("Events") or []) >= 1000:
+        while last_id:
             batch  = get_events(box_id, cfg, token, dl, exclusive_event_id=last_id)
             events = batch.get("Events") or []
             all_events.extend(events)
