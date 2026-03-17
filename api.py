@@ -169,6 +169,16 @@ def get_events_from(box_id: str, cfg: AppConfig, token: str, dl,
     raise RuntimeError(f"GetEventsFrom failed ({resp.status_code}): {resp.text}")
 
 
+def _decode_message_body(body: dict, context: str) -> str:
+    msg_body = body.get("Data", {}).get("MessageBody")
+    if msg_body:
+        try:
+            return base64.b64decode(msg_body).decode("utf-8")
+        except Exception as exc:
+            raise RuntimeError(f"Ошибка декодирования MessageBody: {exc}") from exc
+    raise RuntimeError(f"MessageBody отсутствует в ответе {context}: {body}")
+
+
 def get_inbox_message_xml(box_id: str, message_id: str,
                           cfg: AppConfig, token: str, dl) -> str:
     """
@@ -187,15 +197,7 @@ def get_inbox_message_xml(box_id: str, message_id: str,
             f"GetInboxMessage failed ({resp.status_code}): {resp.text}"
         )
 
-    body = resp.json()
-    msg_body = body.get("Data", {}).get("MessageBody")
-    if msg_body:
-        try:
-            return base64.b64decode(msg_body).decode("utf-8")
-        except Exception as exc:
-            raise RuntimeError(f"Ошибка декодирования MessageBody: {exc}") from exc
-
-    raise RuntimeError(f"MessageBody отсутствует в ответе GetInboxMessage: {body}")
+    return _decode_message_body(resp.json(), "GetInboxMessage")
 
 
 def get_outbox_message_xml(box_id: str, message_id: str,
@@ -214,15 +216,7 @@ def get_outbox_message_xml(box_id: str, message_id: str,
             f"GetOutboxMessage failed ({resp.status_code}): {resp.text}"
         )
 
-    body = resp.json()
-    msg_body = body.get("Data", {}).get("MessageBody")
-    if msg_body:
-        try:
-            return base64.b64decode(msg_body).decode("utf-8")
-        except Exception as exc:
-            raise RuntimeError(f"Ошибка декодирования MessageBody: {exc}") from exc
-
-    raise RuntimeError(f"MessageBody отсутствует в ответе: {body}")
+    return _decode_message_body(resp.json(), "GetOutboxMessage")
 
 
 def get_outbox_message_meta(box_id: str, message_id: str,

@@ -153,6 +153,11 @@ _DELIVERY_EVENT_STATUSES = {
     "MessageCheckingFail": store.STATUS_CHECKING_FAIL,
     "MessageUndelivered":  store.STATUS_CHECKING_FAIL,
 }
+_ORDRSP_STATUS_MAP = {
+    "Accepted": store.STATUS_ACCEPTED,
+    "Rejected": store.STATUS_REJECTED,
+    "Changed":  store.STATUS_CHANGED,
+}
 _ORDRSP_STATUSES = {store.STATUS_ACCEPTED, store.STATUS_REJECTED, store.STATUS_CHANGED}
 
 
@@ -181,11 +186,7 @@ def _handle_ordrsp(or_elem: ET.Element, order: dict,
         return current_status, 0
 
     ordrsp_status = (or_elem.get("status") or "").strip()
-    new_status = {
-        "Accepted": store.STATUS_ACCEPTED,
-        "Rejected": store.STATUS_REJECTED,
-        "Changed":  store.STATUS_CHANGED,
-    }.get(ordrsp_status, store.STATUS_ACCEPTED)
+    new_status = _ORDRSP_STATUS_MAP.get(ordrsp_status, store.STATUS_ACCEPTED)
 
     if new_status != current_status:
         store.update_orders_status(order["id"], new_status)
