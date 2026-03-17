@@ -1,9 +1,18 @@
+import json
 import xml.etree.ElementTree as ET
 import uuid
 import random
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
+
+_VERSION_FILE = Path(__file__).parent / "version.json"
+
+def _app_version() -> str:
+    try:
+        return json.loads(_VERSION_FILE.read_text())["version"]
+    except Exception:
+        return "unknown"
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +35,7 @@ def generate_orders_xml(buyer_gln, seller_gln, line_items, order_number=None):
     now_utc = datetime.now(timezone.utc)
     dt_str = now_utc.strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
     ET.SubElement(ih, "creationDateTime").text = dt_str
+    ET.SubElement(ih, "apiUtility", version=_app_version(), name="EDI Message Sender")
 
     # Order element
     order = ET.SubElement(root, "order")
