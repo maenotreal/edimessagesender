@@ -1,0 +1,154 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# release.yml — Создание релиза при пуше тега v*.*.*
+#
+# Порядок работы:
+#   1. Прогоняет тесты (Windows, т.к. приложение под Windows)
+#   2. Обновляет version.json номером из тега
+#   3. Собирает ZIP-архив EdiMessageSender.zip (без tests.py, .github/, .git/)
+#   4. Генерирует changelog из коммитов
+#   5. Создаёт GitHub Release с архивом
+#
+# Как выпустить новую версию:
+#   git tag v1.2.0
+#   git push origin v1.2.0
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "🚀 Release"
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  # ── 1. Тесты ────────────────────────────────────────────────────────────────
+  test:
+    name: "Run Tests before Release"
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: pytest tests.py -v --tb=short
+
+  # ── 2. Сборка и Релиз ──────────────────────────────────────────────────────
+  release:
+    name: "Build & Publish Release"
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # нужно для changelog
+
+      # ── Извлекаем версию из тега ────────────────────────────────────────────
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          echo "📦 Building release for version: $TAG"
+
+      # ── Обновляем version.json ──────────────────────────────────────────────
+      - name: Update version.json
+        run: |
+          python3 -c "
+          import json
+          with open('version.json', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+          data['version'] = '${{ steps.version.outputs.version }}'
+          with open('version.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, indent=2, ensure_ascii=False)
+          print(f'✅ version.json updated to {data[\"version\"]}}')
+          "
+
+      # ── Собираем ZIP ────────────────────────────────────────────────────────
+      - name: Package release archive
+        run: |
+          mkdir -p dist
+
+          # Файлы и папки, которые НЕ попадут в релиз
+          EXCLUDE=(
+            "tests.py"
+            ".github"
+            ".git"
+            ".gitignore"
+            "dist"
+            "__pycache__"
+            "*.pyc"
+            ".pytest_cache"
+            "coverage.xml"
+          )
+
+          # Формируем аргументы --exclude для zip
+          EXCLUDE_ARGS=""
+          for pattern in "${EXCLUDE[@]}"; do
+            EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude=$pattern"
+          done
+
+          # Создаём архив (внутри — файлы без вложенной папки)
+          zip -r dist/EdiMessageSender.zip . $EXCLUDE_ARGS \
+            -x ".git/*" ".github/*" "__pycache__/*" ".pytest_cache/*" "dist/*"
+
+          echo "📦 Archive contents:"
+          unzip -l dist/EdiMessageSender.zip
+
+      # ── Генерируем changelog ────────────────────────────────────────────────
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Находим предыдущий тег
+          PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | sed -n '2p')
+
+          if [ -z "$PREV_TAG" ]; then
+            echo "First release — all commits included"
+            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" HEAD)
+          else
+            echo "Generating changelog: $PREV_TAG → ${{ steps.version.outputs.tag }}"
+            COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)
+          fi
+
+          # Записываем в файл для multi-line output
+          {
+            echo "## Что нового в v${{ steps.version.outputs.version }}"
+            echo ""
+            echo "$COMMITS"
+            echo ""
+            echo "---"
+            echo "📥 Скачайте \`EdiMessageSender.zip\`, распакуйте и запустите \`python main.py\`"
+          } > changelog.md
+
+          cat changelog.md
+
+      # ── Создаём GitHub Release ──────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "EDI Message Sender v${{ steps.version.outputs.version }}"
+          body_path: changelog.md
+          files: dist/EdiMessageSender.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
