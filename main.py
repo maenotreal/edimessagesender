@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 EDI Message Sender — Kontur.EDI API
-Главный файл с основным меню и обработчиками режимов.
+Главный файл с основным меню и обработчиками режимов
 
 Запуск:  python main.py
 Настройка: python setup.py
