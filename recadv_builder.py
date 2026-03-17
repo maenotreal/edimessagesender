@@ -252,8 +252,8 @@ def build_recadv_xml(
                 ov = ET.SubElement(li, "overshippedQuantity",
                                    unitOfMeasure=item.get("uom", "PCE"))
                 ov.text = f"{diff:g}"
-        except (ValueError, TypeError):
-            pass
+        except (ValueError, TypeError) as exc:
+            logger.warning("Не удалось вычислить расхождение количеств: %s", exc)
 
         if item.get("net_price"):
             ET.SubElement(li, "netPrice").text = item["net_price"]
