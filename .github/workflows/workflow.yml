@@ -1,4 +1,4 @@
-name: Test and Release
+name: Test and Release (Windows)
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
       - 'v*'
 
 jobs:
-  # 1. Задача проведения юнит-тестов
+  # 1. Задача проведения юнит-тестов (запускается при каждом пуше и теге)
   test:
     name: Run Unit Tests
     runs-on: windows-latest
@@ -31,7 +31,7 @@ jobs:
         run: |
           pytest tests.py
 
-  # 2. Задача создания релиза
+  # 2. Задача создания релиза (только при наличии тега и изменении файла version)
   release:
     name: Create Release
     needs: test
@@ -43,20 +43,42 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2 # Нужно для сравнения текущего коммита с предыдущим
+
+      - name: Check if 'version' file changed
+        id: check_version
+        shell: pwsh
+        run: |
+          # Получаем список измененных файлов в последнем коммите
+          $changedFiles = git diff-tree --no-commit-id --name-only -r $env:GITHUB_SHA
+          echo "Измененные файлы: $changedFiles"
+          
+          if ($changedFiles -split "`n" -contains "version") {
+            echo "changed=true" >> $env:GITHUB_OUTPUT
+            echo "Файл version изменен. Продолжаем создание релиза."
+          } else {
+            echo "changed=false" >> $env:GITHUB_OUTPUT
+            echo "Файл version не менялся. Пропуск релиза."
+          }
 
       - name: Package files
-        # Используем PowerShell для фильтрации и архивации
+        if: steps.check_version.outputs.changed == 'true'
         run: |
-          # Get-ChildItem -File выбирает только файлы в корне (игнорируя все папки)
-          # Where-Object исключает конкретный файл tests.py
-          # Compress-Archive создает итоговый zip
+          # Собираем только файлы из корня, исключая tests.py и папки
           Get-ChildItem -Path . -File | 
-          Where-Object { $_.Name -ne "tests.py" } | 
-          Compress-Archive -DestinationPath project_release.zip -Force
+          Where-Object { $_.Name -ne "tests.py" -and $_.Name -ne "EdiMessageSender.zip" } | 
+          Compress-Archive -DestinationPath EdiMessageSender.zip -Force
 
       - name: Create GitHub Release
+        if: steps.check_version.outputs.changed == 'true'
         uses: softprops/action-gh-release@v2
         with:
           files: EdiMessageSender.zip
+          # Использует имя тега, который вы пушите
+          name: Release ${{ github.ref_name }}
+          body: "Автоматический релиз при обновлении версии."
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
