@@ -130,8 +130,7 @@ def collect_accepted_quantities(desadv: DesadvData) -> list[dict]:
                 accepted = li["despatched_qty"]
                 break
             try:
-                float(raw)   # валидация
-                accepted = raw
+                accepted = f"{float(raw):g}"
                 break
             except ValueError:
                 print("    Введите число или нажмите Enter.")
