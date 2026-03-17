@@ -2,11 +2,12 @@
 # release.yml — Создание релиза при пуше тега v*.*.*
 #
 # Порядок работы:
-#   1. Прогоняет тесты (Windows, т.к. приложение под Windows)
-#   2. Обновляет version.json номером из тега
-#   3. Собирает ZIP-архив EdiMessageSender.zip (без tests.py, .github/, .git/)
-#   4. Генерирует changelog из коммитов
-#   5. Создаёт GitHub Release с архивом
+#   1. Прогоняет тесты (Windows)
+#   2. Собирает edimessagesender.exe через PyInstaller (Windows)
+#   3. Обновляет version.json номером из тега
+#   4. Собирает ZIP-архив EdiMessageSender.zip
+#   5. Генерирует changelog из коммитов
+#   6. Создаёт GitHub Release с ZIP и EXE
 #
 # Как выпустить новую версию:
 #   git tag v1.2.0
@@ -47,17 +48,52 @@ jobs:
       - name: Run tests
         run: pytest tests.py -v --tb=short
 
-  # ── 2. Сборка и Релиз ──────────────────────────────────────────────────────
+  # ── 2. Сборка EXE ───────────────────────────────────────────────────────────
+  build-exe:
+    name: "Build EXE"
+    needs: test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build EXE
+        run: |
+          python -m PyInstaller --onefile --console --name edimessagesender `
+            --add-data "joker.png;." `
+            --add-data "version.json;." `
+            main.py
+
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: edimessagesender-exe
+          path: dist/edimessagesender.exe
+          retention-days: 1
+
+  # ── 3. Сборка и Релиз ───────────────────────────────────────────────────────
   release:
     name: "Build & Publish Release"
-    needs: test
+    needs: build-exe
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # нужно для changelog
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       # ── Извлекаем версию из тега ────────────────────────────────────────────
@@ -69,6 +105,13 @@ jobs:
           echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           echo "📦 Building release for version: $TAG"
 
+      # ── Скачиваем собранный EXE ─────────────────────────────────────────────
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: edimessagesender-exe
+          path: dist/
+
       # ── Обновляем version.json ──────────────────────────────────────────────
       - name: Update version.json
         run: |
@@ -79,6 +122,7 @@ jobs:
           data['version'] = '${{ steps.version.outputs.version }}'
           with open('version.json', 'w', encoding='utf-8') as f:
               json.dump(data, f, indent=2, ensure_ascii=False)
+              f.write('\n')
           print('version.json updated to ' + data['version'])
           "
 
@@ -94,8 +138,6 @@ jobs:
       # ── Собираем ZIP ────────────────────────────────────────────────────────
       - name: Package release archive
         run: |
-          mkdir -p dist
-
           # Файлы и папки, которые НЕ попадут в релиз
           EXCLUDE=(
             "tests.py"
@@ -109,13 +151,11 @@ jobs:
             "coverage.xml"
           )
 
-          # Формируем аргументы --exclude для zip
           EXCLUDE_ARGS=""
           for pattern in "${EXCLUDE[@]}"; do
             EXCLUDE_ARGS="$EXCLUDE_ARGS --exclude=$pattern"
           done
 
-          # Создаём архив (внутри — файлы без вложенной папки)
           zip -r dist/EdiMessageSender.zip . $EXCLUDE_ARGS \
             -x ".git/*" ".github/*" "__pycache__/*" ".pytest_cache/*" "dist/*"
 
@@ -126,25 +166,23 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          # Находим предыдущий тег
           PREV_TAG=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | sed -n '2p')
 
           if [ -z "$PREV_TAG" ]; then
-            echo "First release — all commits included"
             COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" HEAD)
           else
-            echo "Generating changelog: $PREV_TAG → ${{ steps.version.outputs.tag }}"
             COMMITS=$(git log --oneline --pretty=format:"- %s (%h)" "$PREV_TAG"..HEAD)
           fi
 
-          # Записываем в файл для multi-line output
           {
             echo "## Что нового в v${{ steps.version.outputs.version }}"
             echo ""
             echo "$COMMITS"
             echo ""
             echo "---"
-            echo "📥 Скачайте \`EdiMessageSender.zip\`, распакуйте и запустите \`python main.py\`"
+            echo "**Скрипт:** скачайте \`EdiMessageSender.zip\`, распакуйте и запустите \`python main.py\`"
+            echo ""
+            echo "**EXE:** скачайте \`edimessagesender.exe\` и запустите напрямую (Python не нужен)"
           } > changelog.md
 
           cat changelog.md
@@ -156,7 +194,9 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           name: "EDI Message Sender v${{ steps.version.outputs.version }}"
           body_path: changelog.md
-          files: dist/EdiMessageSender.zip
+          files: |
+            dist/EdiMessageSender.zip
+            dist/edimessagesender.exe
           draft: false
           prerelease: false
           generate_release_notes: true

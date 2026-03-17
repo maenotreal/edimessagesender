@@ -6,16 +6,18 @@ updater.py — автообновление EDI Message Sender с GitHub.
   2. GET version_url (raw.githubusercontent.com) → актуальная версия
   3. Если версии совпадают или нет сети — ничего не делаем
   4. Если доступна новее — предлагаем обновление пользователю
-  5. Скачиваем ZIP, распаковываем поверх текущей папки
-  6. Перезапускаем main.py
+  5а. Режим EXE  — скачиваем edimessagesender.exe, заменяем через bat-скрипт
+  5б. Режим скрипт — скачиваем ZIP, распаковываем поверх текущей папки
+  6. Перезапускаем приложение
 
 Для выпуска новой версии:
   - Обновите version в репозитории version.json: {"version": "1.1.0", ...}
-  - Загрузите новый EdiMessageSender.zip в GitHub Releases
-    (Releases → Create release → Upload assets)
+  - GitHub Actions автоматически соберёт EdiMessageSender.zip и
+    edimessagesender.exe и прикрепит их к релизу
 """
 
 import json
+import os
 import sys
 import zipfile
 import subprocess
@@ -23,12 +25,16 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+# ── Режим запуска ─────────────────────────────────────────────────────────────
+IS_FROZEN = getattr(sys, "frozen", False)   # True когда запущен как .exe
+
 # ── Константы ─────────────────────────────────────────────────────────────────
-BASE_DIR     = Path(__file__).resolve().parent
+BASE_DIR     = (Path(sys.executable).resolve().parent
+                if IS_FROZEN else Path(__file__).resolve().parent)
 VERSION_FILE = BASE_DIR / "version.json"
 TIMEOUT      = 8  # секунд на HTTP-запрос
 
-# Файлы и папки, которые НИКОГДА не перезаписываются при обновлении
+# Файлы и папки, которые НИКОГДА не перезаписываются при обновлении (ZIP-режим)
 PRESERVE = {
     "edi_config.json",
     "edi_store.json",
@@ -93,7 +99,49 @@ def _download(url: str, dest: Path) -> bool:
         return False
 
 
-# ── Установка ─────────────────────────────────────────────────────────────────
+# ── Установка: EXE-режим ──────────────────────────────────────────────────────
+
+def _install_exe(new_exe_path: Path) -> bool:
+    """
+    Заменить текущий exe на скачанный через bat-скрипт.
+
+    Bat ждёт завершения текущего процесса, затем переименовывает
+    новый exe поверх старого и перезапускает приложение.
+    """
+    try:
+        import shutil
+        current_exe = Path(sys.executable).resolve()
+        staged_exe  = current_exe.with_name(current_exe.stem + "_update.exe")
+        bat_path    = current_exe.parent / "_edi_update.bat"
+        pid         = os.getpid()
+
+        shutil.copy2(new_exe_path, staged_exe)
+
+        bat_path.write_text(
+            "@echo off\n"
+            ":wait\n"
+            f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\n'
+            "if not errorlevel 1 (\n"
+            "  timeout /t 1 /nobreak >NUL\n"
+            "  goto wait\n"
+            ")\n"
+            f'move /Y "{staged_exe}" "{current_exe}"\n'
+            f'start "" "{current_exe}"\n'
+            'del "%~f0"\n',
+            encoding="ascii",
+        )
+
+        subprocess.Popen(
+            ["cmd", "/c", str(bat_path)],
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return True
+    except Exception as exc:
+        print(f"  Ошибка установки: {exc}")
+        return False
+
+
+# ── Установка: ZIP-режим ──────────────────────────────────────────────────────
 
 def _install_zip(zip_path: Path, target_dir: Path) -> bool:
     """
@@ -153,9 +201,10 @@ def check_and_update(silent: bool = False) -> None:
         return
 
     try:
-        cfg = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
+        cfg         = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
         version_url = cfg.get("version_url", "")
         zip_url     = cfg.get("zip_url", "")
+        exe_url     = cfg.get("exe_url", "")
     except Exception:
         return
 
@@ -168,13 +217,11 @@ def check_and_update(silent: bool = False) -> None:
     remote = _remote_info(version_url)
 
     if remote is None:
-        # Нет сети или репозиторий недоступен — тихо продолжаем
         if not silent:
             print(" сервер недоступен.")
         return
 
-    remote_v   = remote.get("version", "0.0.0")
-    remote_url = remote.get("zip_url", zip_url)
+    remote_v = remote.get("version", "0.0.0")
 
     if _parse_version(remote_v) <= _parse_version(local_v):
         if not silent:
@@ -191,25 +238,52 @@ def check_and_update(silent: bool = False) -> None:
         print("  Обновление отложено.\n")
         return
 
-    # ── Скачиваем во временную папку, затем устанавливаем ────────────────────
-    with tempfile.TemporaryDirectory() as tmp:
-        zip_path = Path(tmp) / "update.zip"
-        print(f"  Загружаю обновление...")
-        if not _download(remote_url, zip_path):
-            print("  Обновление не выполнено.")
+    print(f"  Загружаю обновление...")
+
+    if IS_FROZEN:
+        # ── EXE-режим ─────────────────────────────────────────────────────────
+        remote_exe_url = remote.get("exe_url", exe_url)
+        if not remote_exe_url:
+            print("  exe_url не найден в version.json — обновление недоступно.")
             return
 
-        print("  Устанавливаю...")
-        if not _install_zip(zip_path, BASE_DIR):
-            print("  Обновление не выполнено.")
+        with tempfile.TemporaryDirectory() as tmp:
+            dl_path = Path(tmp) / "edimessagesender_new.exe"
+            if not _download(remote_exe_url, dl_path):
+                print("  Обновление не выполнено.")
+                return
+
+            print("  Устанавливаю...")
+            if not _install_exe(dl_path):
+                print("  Обновление не выполнено.")
+                return
+
+    else:
+        # ── ZIP-режим (скрипт) ────────────────────────────────────────────────
+        remote_zip_url = remote.get("zip_url", zip_url)
+        if not remote_zip_url:
+            print("  zip_url не найден в version.json — обновление недоступно.")
             return
 
-    # Обновляем версию в локальном version.json
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "update.zip"
+            if not _download(remote_zip_url, zip_path):
+                print("  Обновление не выполнено.")
+                return
+
+            print("  Устанавливаю...")
+            if not _install_zip(zip_path, BASE_DIR):
+                print("  Обновление не выполнено.")
+                return
+
+    # ── Обновляем локальный version.json ──────────────────────────────────────
     try:
         data = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
         data["version"] = remote_v
         if remote.get("zip_url"):
             data["zip_url"] = remote["zip_url"]
+        if remote.get("exe_url"):
+            data["exe_url"] = remote["exe_url"]
         VERSION_FILE.write_text(
             json.dumps(data, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -220,6 +294,8 @@ def check_and_update(silent: bool = False) -> None:
     print(f"  ✓ Версия {remote_v} установлена.")
     print("  Перезапуск...\n")
 
-    # Перезапускаем и выходим
-    subprocess.Popen([sys.executable] + sys.argv)
-    sys.exit(0)
+    if IS_FROZEN:
+        sys.exit(0)
+    else:
+        subprocess.Popen([sys.executable] + sys.argv)
+        sys.exit(0)
