@@ -21,7 +21,9 @@ _RETRY_ON = (
     requests.exceptions.ChunkedEncodingError,
 )
 _MAX_RETRIES = 3
-_BACKOFF_BASE = 1.0  # секунды
+_BACKOFF_BASE = 1.0   # секунды
+_REQUEST_TIMEOUT = 60  # секунды
+_REQUEST_TIMEOUT = 60  # секунды
 
 from auth import build_auth_header, get_token, invalidate_token
 from config import AppConfig
@@ -75,7 +77,7 @@ def _request(method: str, path: str, cfg: AppConfig, dl,
         for attempt in range(_MAX_RETRIES):
             try:
                 r = requests.request(method, url, params=params, headers=hdrs,
-                                     data=data, timeout=60)
+                                     data=data, timeout=_REQUEST_TIMEOUT)
                 _log_resp(dl, r)
                 return r
             except _RETRY_ON as exc:
