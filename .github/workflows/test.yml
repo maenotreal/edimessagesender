@@ -57,8 +57,16 @@ jobs:
       # ── Тесты с группировкой и эмодзи ──────────────────────────────────────
       - name: Run tests
         shell: python
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: 1
         run: |
-          import subprocess, sys, re
+          import subprocess, sys, re, os, io
+
+          # Принудительно UTF-8 для stdout/stderr (Windows cp1252 fix)
+          if sys.stdout.encoding != "utf-8":
+              sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+              sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
           # ── Запуск pytest с verbose ───────────────────────────────────────
           result = subprocess.run(
