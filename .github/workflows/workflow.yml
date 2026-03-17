@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*' # Релиз будет создаваться только при пуше тега, например: git tag v1.0.0 && git push --tags
+      - 'v*'
 
 jobs:
   # 1. Задача проведения юнит-тестов
@@ -24,35 +24,35 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Установка зависимостей, если есть requirements.txt
-          if ( -f requirements.txt ); then pip install -r requirements.txt; fi
-          # Установка фреймворка для тестов (например, pytest)
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
           pip install pytest
 
       - name: Run tests
         run: |
-          # Запуск тестов
           pytest tests.py
 
-  # 2. Задача создания релиза (запускается только после успешных тестов и только для тегов)
+  # 2. Задача создания релиза
   release:
     name: Create Release
     needs: test
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: windows-latest
     permissions:
-      contents: write # Необходимо для создания релиза в GitHub
+      contents: write
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Package files
+        # Используем PowerShell для фильтрации и архивации
         run: |
-          # Команда find ищет только файлы (-type f) в корневой директории (-maxdepth 1)
-          # Она исключает файл tests.py и скрытые файлы/папки (начинающиеся с точки, например .git)
-          # Затем найденные файлы запаковываются в project_release.zip
-          find . -maxdepth 1 -type f ! -name "tests.py" ! -name ".*" -print | zip project_release.zip -@
+          # Get-ChildItem -File выбирает только файлы в корне (игнорируя все папки)
+          # Where-Object исключает конкретный файл tests.py
+          # Compress-Archive создает итоговый zip
+          Get-ChildItem -Path . -File | 
+          Where-Object { $_.Name -ne "tests.py" } | 
+          Compress-Archive -DestinationPath project_release.zip -Force
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
