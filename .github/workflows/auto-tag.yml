@@ -60,10 +60,14 @@ jobs:
               sys.exit(0)
 
           # Определяем тип bump
-          bump = None
+          PATCH_THRESHOLD = 5  # патч-тег только после N fix/refactor коммитов
+
           MAJOR = re.compile(r"^(new|feat!)[\s:!]|breaking.change", re.I)
           MINOR = re.compile(r"^feat[\s:]", re.I)
           PATCH = re.compile(r"^(fix|refactor)[\s:]", re.I)
+
+          bump = None
+          patch_count = 0
 
           for msg in commits:
               if MAJOR.match(msg):
@@ -71,11 +75,19 @@ jobs:
                   break
               elif MINOR.match(msg) and bump != "major":
                   bump = "minor"
-              elif PATCH.match(msg) and bump not in ("major", "minor"):
-                  bump = "patch"
+              elif PATCH.match(msg):
+                  patch_count += 1
+                  if bump not in ("major", "minor"):
+                      bump = "patch"
 
           if not bump:
               print("Только служебные коммиты — версия не меняется.")
+              sys.exit(0)
+
+          # Патч выпускается только после накопления PATCH_THRESHOLD коммитов,
+          # если не было более приоритетного bump
+          if bump == "patch" and patch_count < PATCH_THRESHOLD:
+              print(f"Патч-коммитов: {patch_count}/{PATCH_THRESHOLD} — ждём накопления.")
               sys.exit(0)
 
           # Текущая версия
