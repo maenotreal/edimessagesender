@@ -1,7 +1,7 @@
 """logger.py – logging setup (console + daily rotating file)."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
@@ -18,13 +18,14 @@ def setup_logging() -> logging.Logger:
     today = datetime.now().strftime("%Y-%m-%d")
     today_log = log_dir / f"log_{today}.txt"
 
-    # Remove yesterday's logs
+    # Удаляем логи старше 7 дней
+    cutoff = datetime.now() - timedelta(days=7)
     for old in log_dir.glob("log_*.txt"):
-        if old != today_log:
-            try:
+        try:
+            if datetime.strptime(old.stem[4:], "%Y-%m-%d") < cutoff:
                 old.unlink()
-            except OSError:
-                pass
+        except (ValueError, OSError):
+            pass
 
     fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(message)s")
 
