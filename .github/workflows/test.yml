@@ -54,63 +54,68 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      # ── Тесты с группировкой и эмодзи ──────────────────────────────────────
-      - name: Run tests
-        shell: python
+      # ── Запуск тестов ───────────────────────────────────────────────────────
+      - name: Run pytest (raw output)
+        id: pytest
+        run: |
+          python -m pytest tests.py -v --tb=short --cov=. --cov-report=term-missing > pytest_output.txt 2>&1 || true
+          python -c "import sys; sys.exit(0 if 'failed' not in open('pytest_output.txt').read().split()[-2:][0] else 1)" || echo "HAS_FAILURES=true" >> $GITHUB_ENV
+        shell: bash
+
+      # ── Форматированный отчёт ───────────────────────────────────────────────
+      - name: Format test report
+        shell: bash
         env:
           PYTHONIOENCODING: utf-8
-          PYTHONUTF8: 1
+          PYTHONUTF8: "1"
         run: |
-          import subprocess, sys, re, os, io
+          python3 -u -c "
+          # -*- coding: utf-8 -*-
+          import sys, re, io
 
-          # Принудительно UTF-8 для stdout/stderr (Windows cp1252 fix)
-          if sys.stdout.encoding != "utf-8":
-              sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-              sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+          if sys.stdout.encoding != 'utf-8':
+              sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
-          # ── Запуск pytest с verbose ───────────────────────────────────────
-          result = subprocess.run(
-              [sys.executable, "-m", "pytest", "tests.py", "-v", "--tb=short",
-               "--cov=.", "--cov-report=term-missing"],
-              capture_output=True, text=True, encoding="utf-8"
-          )
-
-          stdout = result.stdout
-          stderr = result.stderr
-
-          # ── Парсим результаты тестов ──────────────────────────────────────
-          # pytest -v выводит строки вида:
-          #   tests.py::TestConfig::test_create_default_writes_file PASSED
-          #   tests.py::TestApi::test_is_xml_detects_xml_bytes FAILED
+          with open('pytest_output.txt', encoding='utf-8', errors='replace') as f:
+              stdout = f.read()
 
           test_line = re.compile(
-              r"tests\.py::(\w+)::(\w+)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)"
+              r'tests\.py::(\w+)::(\w+)\s+(PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)'
           )
 
           STATUS_EMOJI = {
-              "PASSED":  "\u2705",
-              "FAILED":  "\u274c",
-              "ERROR":   "\U0001f4a5",
-              "SKIPPED": "\u23ed\ufe0f",
-              "XFAIL":   "\U0001f536",
-              "XPASS":   "\U0001f537",
+              'PASSED':  '\u2705',
+              'FAILED':  '\u274c',
+              'ERROR':   '\U0001f4a5',
+              'SKIPPED': '\u23ed\ufe0f',
+              'XFAIL':   '\U0001f536',
+              'XPASS':   '\U0001f537',
           }
+
+          GROUP_ORDER = [
+              'TestConfig',
+              'TestAuth',
+              'TestXmlBuilder',
+              'TestRecadvBuilder',
+              'TestStore',
+              'TestApi',
+              'TestUpdater',
+              'TestIntegration',
+          ]
 
           GROUP_NAMES = {
-              "TestConfig":        "\u2699\ufe0f  Config \u2014 \u041a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044f",
-              "TestAuth":          "\U0001f510 Auth \u2014 \u0410\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u044f",
-              "TestXmlBuilder":    "\U0001f4dd XmlBuilder \u2014 \u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f XML",
-              "TestRecadvBuilder": "\U0001f4e6 RecadvBuilder \u2014 \u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f RECADV",
-              "TestStore":         "\U0001f4be Store \u2014 \u0425\u0440\u0430\u043d\u0438\u043b\u0438\u0449\u0435 \u0434\u0430\u043d\u043d\u044b\u0445",
-              "TestApi":           "\U0001f310 API \u2014 \u041a\u043b\u0438\u0435\u043d\u0442 EDI API",
-              "TestUpdater":       "\U0001f504 Updater \u2014 \u0410\u0432\u0442\u043e\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435",
-              "TestIntegration":   "\U0001f517 Integration \u2014 \u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0435 \u0442\u0435\u0441\u0442\u044b",
+              'TestConfig':        '\u2699\ufe0f  Config \u2014 \u041a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044f',
+              'TestAuth':          '\U0001f510 Auth \u2014 \u0410\u0432\u0442\u043e\u0440\u0438\u0437\u0430\u0446\u0438\u044f',
+              'TestXmlBuilder':    '\U0001f4dd XmlBuilder \u2014 \u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f XML',
+              'TestRecadvBuilder': '\U0001f4e6 RecadvBuilder \u2014 \u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f RECADV',
+              'TestStore':         '\U0001f4be Store \u2014 \u0425\u0440\u0430\u043d\u0438\u043b\u0438\u0449\u0435 \u0434\u0430\u043d\u043d\u044b\u0445',
+              'TestApi':           '\U0001f310 API \u2014 \u041a\u043b\u0438\u0435\u043d\u0442 EDI API',
+              'TestUpdater':       '\U0001f504 Updater \u2014 \u0410\u0432\u0442\u043e\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u0435',
+              'TestIntegration':   '\U0001f517 Integration \u2014 \u0418\u043d\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u043e\u043d\u043d\u044b\u0435 \u0442\u0435\u0441\u0442\u044b',
           }
 
-          # Группируем: {class_name: [(test_name, status), ...]}
-          from collections import OrderedDict
-          groups = OrderedDict()
-          for cls in GROUP_NAMES:
+          groups = {}
+          for cls in GROUP_ORDER:
               groups[cls] = []
 
           for line in stdout.splitlines():
@@ -121,95 +126,91 @@ jobs:
                       groups[cls] = []
                   groups[cls].append((test, status))
 
-          # ── Выводим красивый отчёт ───────────────────────────────────────
           total = passed = failed = skipped = errors = 0
 
-          for cls, tests in groups.items():
+          for cls in list(GROUP_ORDER) + [k for k in groups if k not in GROUP_ORDER]:
+              tests = groups.get(cls, [])
               if not tests:
                   continue
 
-              group_label = GROUP_NAMES.get(cls, f"\U0001f539 {cls}")
-              cls_passed  = sum(1 for _, s in tests if s == "PASSED")
-              cls_failed  = sum(1 for _, s in tests if s in ("FAILED", "ERROR"))
-              cls_total   = len(tests)
+              group_label = GROUP_NAMES.get(cls, '\U0001f539 ' + cls)
+              cls_passed = sum(1 for _, s in tests if s == 'PASSED')
+              cls_failed = sum(1 for _, s in tests if s in ('FAILED', 'ERROR'))
+              cls_total = len(tests)
+              icon = '\u274c' if cls_failed > 0 else '\u2705'
 
-              if cls_failed > 0:
-                  group_icon = "\u274c"
-              else:
-                  group_icon = "\u2705"
-
-              print(f"::group::{group_icon} {group_label}  ({cls_passed}/{cls_total} \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u043e)")
+              print('::group::' + icon + ' ' + group_label + '  (' + str(cls_passed) + '/' + str(cls_total) + ' \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u043e)')
               print()
 
               for test_name, status in tests:
-                  emoji = STATUS_EMOJI.get(status, "\u2753")
-                  display = test_name.replace("test_", "", 1)
-                  print(f"  {emoji} {display}")
-
+                  emoji = STATUS_EMOJI.get(status, '\u2753')
+                  display = test_name.replace('test_', '', 1)
+                  print('  ' + emoji + ' ' + display)
                   total += 1
-                  if status == "PASSED":
+                  if status == 'PASSED':
                       passed += 1
-                  elif status == "FAILED":
+                  elif status == 'FAILED':
                       failed += 1
-                  elif status == "ERROR":
+                  elif status == 'ERROR':
                       errors += 1
-                  elif status == "SKIPPED":
+                  elif status == 'SKIPPED':
                       skipped += 1
 
               print()
-              print("::endgroup::")
+              print('::endgroup::')
 
-          # ── Итоговая сводка ──────────────────────────────────────────────
           print()
-          print("\u2500" * 60)
+          print('\u2500' * 60)
 
           if failed + errors == 0:
-              summary = f"\U0001f389 \u0412\u0441\u0435 \u0442\u0435\u0441\u0442\u044b \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u044b!  \u2705 {passed} passed"
+              line = '\U0001f389 \u0412\u0441\u0435 \u0442\u0435\u0441\u0442\u044b \u043f\u0440\u043e\u0439\u0434\u0435\u043d\u044b!  \u2705 ' + str(passed) + ' passed'
           else:
-              summary = f"\U0001f494 \u0415\u0441\u0442\u044c \u043e\u0448\u0438\u0431\u043a\u0438!  \u274c {failed} failed  \U0001f4a5 {errors} errors  \u2705 {passed} passed"
+              line = '\U0001f494 \u0415\u0441\u0442\u044c \u043e\u0448\u0438\u0431\u043a\u0438!  \u274c ' + str(failed) + ' failed  \U0001f4a5 ' + str(errors) + ' errors  \u2705 ' + str(passed) + ' passed'
 
           if skipped:
-              summary += f"  \u23ed\ufe0f {skipped} skipped"
+              line += '  \u23ed\ufe0f ' + str(skipped) + ' skipped'
 
-          summary += f"  (\u0432\u0441\u0435\u0433\u043e: {total})"
-          print(summary)
-          print("\u2500" * 60)
+          line += '  (\u0432\u0441\u0435\u0433\u043e: ' + str(total) + ')'
+          print(line)
+          print('\u2500' * 60)
 
-          # ── Coverage отчёт ───────────────────────────────────────────────
+          # Coverage
           print()
-          print("::group::\U0001f4ca Coverage")
+          print('::group::\U0001f4ca Coverage')
           cov_started = False
-          for line in stdout.splitlines():
-              if "---------- coverage:" in line or line.startswith("Name "):
+          for l in stdout.splitlines():
+              if '---------- coverage:' in l or l.startswith('Name '):
                   cov_started = True
               if cov_started:
-                  print(line)
-              if cov_started and line.startswith("TOTAL"):
+                  print(l)
+              if cov_started and l.startswith('TOTAL'):
                   break
-          print("::endgroup::")
+          print('::endgroup::')
 
-          # ── Ошибки если есть ─────────────────────────────────────────────
+          # Ошибки
           if failed + errors > 0:
               print()
-              print("::group::\U0001f4a5 \u041f\u043e\u0434\u0440\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u043e\u0448\u0438\u0431\u043e\u043a")
+              print('::group::\U0001f4a5 \u041f\u043e\u0434\u0440\u043e\u0431\u043d\u043e\u0441\u0442\u0438 \u043e\u0448\u0438\u0431\u043e\u043a')
               in_failures = False
-              for line in stdout.splitlines():
-                  if "FAILURES" in line or "ERRORS" in line:
+              for l in stdout.splitlines():
+                  if 'FAILURES' in l or 'ERRORS' in l:
                       in_failures = True
                   if in_failures:
-                      print(line)
-                  if in_failures and "short test summary" in line:
+                      print(l)
+                  if in_failures and 'short test summary' in l:
                       break
-              if stderr.strip():
-                  print("\nstderr:")
-                  print(stderr)
-              print("::endgroup::")
+              print('::endgroup::')
+          "
 
-          sys.exit(result.returncode)
+      # ── Финальная проверка статуса ──────────────────────────────────────────
+      - name: Check test results
+        shell: bash
+        run: |
+          python -m pytest tests.py --tb=no -q > /dev/null 2>&1
 
       # ── Загрузка coverage (только ubuntu + последний Python) ────────────────
       - name: Upload coverage report
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13' && always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
