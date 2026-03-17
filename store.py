@@ -14,11 +14,14 @@ store.py – локальное хранилище документов EDI.
 
 import json
 import logging
+import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_store_lock = threading.Lock()
 
 _BASE_DIR  = Path(__file__).parent
 STORE_FILE = _BASE_DIR / "edi_store.json"
@@ -79,8 +82,7 @@ def save_orders(
     message_id: str = "",
 ) -> str:
     """Сохранить отправленный ORDERS. Возвращает внутренний id."""
-    data    = _load()
-    rec_id  = str(uuid.uuid4())
+    rec_id   = str(uuid.uuid4())
     xml_file = _xml_path("ORDERS", rec_id)
     xml_file.write_text(xml_content, encoding="utf-8")
 
@@ -98,8 +100,10 @@ def save_orders(
         "orders_status":  STATUS_PENDING,
         "desadv":         [],
     }
-    data["orders"].append(record)
-    _save(data)
+    with _store_lock:
+        data = _load()
+        data["orders"].append(record)
+        _save(data)
     logger.info("ORDERS сохранён: %s / %s", order_number, rec_id)
     return rec_id
 
@@ -116,22 +120,24 @@ def get_order_by_id(order_id: str) -> dict | None:
 
 
 def update_orders_status(order_id: str, status: str) -> None:
-    data = _load()
-    for o in data["orders"]:
-        if o["id"] == order_id:
-            o["orders_status"] = status
-            break
-    _save(data)
+    with _store_lock:
+        data = _load()
+        for o in data["orders"]:
+            if o["id"] == order_id:
+                o["orders_status"] = status
+                break
+        _save(data)
 
 
 def update_order_fields(order_id: str, **fields) -> None:
     """Обновить произвольные поля записи ORDERS."""
-    data = _load()
-    for o in data["orders"]:
-        if o["id"] == order_id:
-            o.update(fields)
-            break
-    _save(data)
+    with _store_lock:
+        data = _load()
+        for o in data["orders"]:
+            if o["id"] == order_id:
+                o.update(fields)
+                break
+        _save(data)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,47 +151,49 @@ def attach_desadv(
     xml_content: str,
 ) -> str | None:
     """Прикрепить DESADV к ORDERS. Возвращает id DESADV или None."""
-    data = _load()
-    for o in data["orders"]:
-        if o["id"] != order_id:
-            continue
-        # Дедупликация по номеру
-        for d in o.get("desadv", []):
-            if d["desadv_number"] == desadv_number:
-                logger.info("DESADV %s уже сохранён.", desadv_number)
-                return d["id"]
+    with _store_lock:
+        data = _load()
+        for o in data["orders"]:
+            if o["id"] != order_id:
+                continue
+            # Дедупликация по номеру
+            for d in o.get("desadv", []):
+                if d["desadv_number"] == desadv_number:
+                    logger.info("DESADV %s уже сохранён.", desadv_number)
+                    return d["id"]
 
-        desadv_id = str(uuid.uuid4())
-        xml_file  = _xml_path("DESADV", desadv_id)
-        xml_file.write_text(xml_content, encoding="utf-8")
+            desadv_id = str(uuid.uuid4())
+            xml_file  = _xml_path("DESADV", desadv_id)
+            xml_file.write_text(xml_content, encoding="utf-8")
 
-        o.setdefault("desadv", []).append({
-            "id":            desadv_id,
-            "desadv_number": desadv_number,
-            "desadv_date":   desadv_date,
-            "received_at":   datetime.now().isoformat(timespec="seconds"),
-            "xml_file":      str(xml_file.relative_to(_BASE_DIR)),
-            "recadv_sent":   False,
-        })
-        _save(data)
-        logger.info("DESADV %s прикреплён к ORDERS %s", desadv_number, order_id)
-        return desadv_id
+            o.setdefault("desadv", []).append({
+                "id":            desadv_id,
+                "desadv_number": desadv_number,
+                "desadv_date":   desadv_date,
+                "received_at":   datetime.now().isoformat(timespec="seconds"),
+                "xml_file":      str(xml_file.relative_to(_BASE_DIR)),
+                "recadv_sent":   False,
+            })
+            _save(data)
+            logger.info("DESADV %s прикреплён к ORDERS %s", desadv_number, order_id)
+            return desadv_id
 
     logger.warning("ORDERS %s не найден", order_id)
     return None
 
 
 def mark_recadv_sent(order_id: str, desadv_id: str) -> None:
-    data = _load()
-    for o in data["orders"]:
-        if o["id"] != order_id:
-            continue
-        for d in o.get("desadv", []):
-            if d["id"] == desadv_id:
-                d["recadv_sent"] = True
-                break
-        break
-    _save(data)
+    with _store_lock:
+        data = _load()
+        for o in data["orders"]:
+            if o["id"] != order_id:
+                continue
+            for d in o.get("desadv", []):
+                if d["id"] == desadv_id:
+                    d["recadv_sent"] = True
+                    break
+            break
+        _save(data)
 
 
 def read_xml(relative_path: str) -> str | None:
@@ -213,21 +221,20 @@ def delete_order(order_id: str) -> bool:
     Удалить ORDERS и все его DESADV из хранилища вместе с XML-файлами.
     Возвращает True если запись найдена и удалена.
     """
-    data = _load()
-    for i, o in enumerate(data["orders"]):
-        if o["id"] != order_id:
-            continue
-        # Удаляем XML самого ORDERS
-        if o.get("xml_file"):
-            _delete_xml_file(o["xml_file"])
-        # Удаляем XML всех DESADV
-        for d in o.get("desadv", []):
-            if d.get("xml_file"):
-                _delete_xml_file(d["xml_file"])
-        data["orders"].pop(i)
-        _save(data)
-        logger.info("ORDERS %s удалён из хранилища.", o.get("order_number", order_id))
-        return True
+    with _store_lock:
+        data = _load()
+        for i, o in enumerate(data["orders"]):
+            if o["id"] != order_id:
+                continue
+            if o.get("xml_file"):
+                _delete_xml_file(o["xml_file"])
+            for d in o.get("desadv", []):
+                if d.get("xml_file"):
+                    _delete_xml_file(d["xml_file"])
+            data["orders"].pop(i)
+            _save(data)
+            logger.info("ORDERS %s удалён из хранилища.", o.get("order_number", order_id))
+            return True
     return False
 
 
@@ -237,29 +244,30 @@ def purge_old_orders(days: int) -> int:
     Критерий: поле sent_at.
     Возвращает количество удалённых записей.
     """
-    from datetime import datetime, timedelta
     cutoff = datetime.now() - timedelta(days=days)
-    data   = _load()
-    to_delete = []
+    with _store_lock:
+        data      = _load()
+        to_delete = []
 
-    for o in data["orders"]:
-        try:
-            sent = datetime.fromisoformat(o.get("sent_at", ""))
-            if sent < cutoff:
-                to_delete.append(o)
-        except ValueError:
-            pass
+        for o in data["orders"]:
+            try:
+                sent = datetime.fromisoformat(o.get("sent_at", ""))
+                if sent < cutoff:
+                    to_delete.append(o)
+            except ValueError:
+                pass
 
-    for o in to_delete:
-        if o.get("xml_file"):
-            _delete_xml_file(o["xml_file"])
-        for d in o.get("desadv", []):
-            if d.get("xml_file"):
-                _delete_xml_file(d["xml_file"])
+        for o in to_delete:
+            if o.get("xml_file"):
+                _delete_xml_file(o["xml_file"])
+            for d in o.get("desadv", []):
+                if d.get("xml_file"):
+                    _delete_xml_file(d["xml_file"])
 
-    ids = {o["id"] for o in to_delete}
-    data["orders"] = [o for o in data["orders"] if o["id"] not in ids]
-    _save(data)
+        ids = {o["id"] for o in to_delete}
+        data["orders"] = [o for o in data["orders"] if o["id"] not in ids]
+        _save(data)
+
     logger.info("Удалено устаревших ORDERS: %d (старше %d дней).", len(to_delete), days)
     return len(to_delete)
 
@@ -271,29 +279,31 @@ def purge_completed_orders() -> int:
     Возвращает количество удалённых записей.
     """
     final_statuses = {STATUS_ACCEPTED, STATUS_REJECTED}
-    data   = _load()
-    to_delete = []
+    with _store_lock:
+        data      = _load()
+        to_delete = []
 
-    for o in data["orders"]:
-        if o.get("orders_status") not in final_statuses:
-            continue
-        desadvs = o.get("desadv", [])
-        # Считаем завершённым если: нет DESADV (заказ отклонён/не отгружался)
-        # ИЛИ все DESADV имеют recadv_sent=True
-        all_recadv_sent = all(d.get("recadv_sent") for d in desadvs) if desadvs else True
-        if all_recadv_sent:
-            to_delete.append(o)
+        for o in data["orders"]:
+            if o.get("orders_status") not in final_statuses:
+                continue
+            desadvs = o.get("desadv", [])
+            # Считаем завершённым если: нет DESADV (заказ отклонён/не отгружался)
+            # ИЛИ все DESADV имеют recadv_sent=True
+            all_recadv_sent = all(d.get("recadv_sent") for d in desadvs) if desadvs else True
+            if all_recadv_sent:
+                to_delete.append(o)
 
-    for o in to_delete:
-        if o.get("xml_file"):
-            _delete_xml_file(o["xml_file"])
-        for d in o.get("desadv", []):
-            if d.get("xml_file"):
-                _delete_xml_file(d["xml_file"])
+        for o in to_delete:
+            if o.get("xml_file"):
+                _delete_xml_file(o["xml_file"])
+            for d in o.get("desadv", []):
+                if d.get("xml_file"):
+                    _delete_xml_file(d["xml_file"])
 
-    ids = {o["id"] for o in to_delete}
-    data["orders"] = [o for o in data["orders"] if o["id"] not in ids]
-    _save(data)
+        ids = {o["id"] for o in to_delete}
+        data["orders"] = [o for o in data["orders"] if o["id"] not in ids]
+        _save(data)
+
     logger.info("Удалено завершённых ORDERS: %d.", len(to_delete))
     return len(to_delete)
 
