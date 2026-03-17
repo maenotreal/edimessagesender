@@ -39,7 +39,7 @@ def _is_xml(body: Any) -> bool:
     sample = (body[:100].decode("utf-8", errors="ignore")
               if isinstance(body, bytes) else str(body)[:100])
     s = sample.lstrip()
-    return s.startswith("<?xml") or s.startswith("<")
+    return s.startswith("<?xml") or (s.startswith("<") and not s.startswith("<!"))
 
 
 def _log_req(dl, method, url, headers, body=None):
