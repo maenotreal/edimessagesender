@@ -1,7 +1,6 @@
 import json
 import xml.etree.ElementTree as ET
 import uuid
-import random
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -40,8 +39,7 @@ def generate_orders_xml(buyer_gln, seller_gln, line_items, order_number=None):
     # Order element
     order = ET.SubElement(root, "order")
     if order_number is None:
-        random_suffix = random.randint(1000, 9999)
-        order_number = f"ORD-{now_utc.strftime('%Y%m%d-%H%M%S')}-{random_suffix}"
+        order_number = f"ORD-{now_utc.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
     order.set("number", order_number)
     order.set("date", now_utc.strftime('%Y-%m-%d'))
 

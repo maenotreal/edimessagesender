@@ -66,7 +66,7 @@ def _device_flow(cfg: AppConfig, dl) -> dict:
     }
     dl.info("OIDC Device Auth → POST %s", OIDC_DEVICE_URL)
     resp = requests.post(OIDC_DEVICE_URL, data=payload, timeout=30)
-    dl.info("Status %s: %s", resp.status_code, resp.text)
+    dl.info("Status %s", resp.status_code)
 
     if resp.status_code != 200:
         logger.error("Device auth failed (%d): %s", resp.status_code, resp.text)
@@ -179,7 +179,7 @@ def _legacy_auth(cfg: AppConfig, dl) -> str:
     }
     dl.info("Legacy Auth → POST %s", url)
     resp = requests.post(url, headers=headers, timeout=30)
-    dl.info("Status %s: %s", resp.status_code, resp.text)
+    dl.info("Status %s", resp.status_code)
 
     if resp.status_code == 200:
         logger.info("Legacy авторизация успешна.")

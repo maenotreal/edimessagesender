@@ -380,7 +380,7 @@ def mode_send_existing(cfg: AppConfig, token: str) -> None:
         pause(); return
 
     xml_bytes   = path.read_bytes()
-    xml_content = xml_bytes.decode("utf-8", errors="ignore")
+    xml_content = xml_bytes.decode("utf-8", errors="replace")
 
     try:
         resp = send_message(box_id, cfg, token, dl, xml_bytes, path.name)
