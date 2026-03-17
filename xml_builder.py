@@ -130,66 +130,6 @@ def generate_pricat_xml(version, supplier_gln, buyer_gln, line_items,
     return xml_str, filename
 
 
-def parse_line_item_file(filepath):
-    """
-    Parse lineItem.txt and extract the values.
-    Returns a dict with keys: gtin, internal_buyer_code, description,
-    requested_quantity, unit_of_measure, net_price, vat_rate.
-    """
-    try:
-        tree = ET.parse(filepath)
-        root = tree.getroot()
-        li = {}
-        gtin_elem = root.find('gtin')
-        if gtin_elem is not None:
-            li['gtin'] = gtin_elem.text
-        internal_elem = root.find('internalBuyerCode')
-        if internal_elem is not None:
-            li['internal_buyer_code'] = internal_elem.text
-        desc_elem = root.find('description')
-        if desc_elem is not None:
-            li['description'] = desc_elem.text
-        req_qty = root.find('requestedQuantity')
-        if req_qty is not None:
-            li['requested_quantity'] = req_qty.text
-            li['unit_of_measure'] = req_qty.get('unitOfMeasure', 'PCE')
-        net_price = root.find('netPrice')
-        if net_price is not None:
-            li['net_price'] = net_price.text
-        vat = root.find('vATRate')
-        if vat is not None:
-            li['vat_rate'] = vat.text
-        return li
-    except Exception as e:
-        logger.error("Failed to parse line item file: %s", e)
-        return None
-
-def input_line_item_manually(item_number):
-    """Ask user to input fields for a line item. Empty fields are omitted."""
-    print(f"\n--- Line Item #{item_number} ---")
-    li = {}
-    gtin = input("GTIN (enter to skip): ").strip()
-    if gtin:
-        li['gtin'] = gtin
-    internal = input("Internal buyer code (enter to skip): ").strip()
-    if internal:
-        li['internal_buyer_code'] = internal
-    desc = input("Description (enter to skip): ").strip()
-    if desc:
-        li['description'] = desc
-    qty = input("Requested quantity (enter to skip): ").strip()
-    if qty:
-        li['requested_quantity'] = qty
-        uom = input("Unit of measure (default PCE, enter to use default): ").strip()
-        li['unit_of_measure'] = uom if uom else "PCE"
-    price = input("Net price (enter to skip): ").strip()
-    if price:
-        li['net_price'] = price
-    vat = input("VAT rate (enter to skip): ").strip()
-    if vat:
-        li['vat_rate'] = vat
-    return li if li else None   # return None if all empty
-
 def input_full_line_item_manually(item_number):
     """
     Ask user to input all possible fields for a line item (based on the ORDERS template).

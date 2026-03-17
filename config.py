@@ -134,10 +134,10 @@ def create_default() -> dict:
 
 def _deep_get(d: dict, *keys, default=None):
     for k in keys:
-        if not isinstance(d, dict):
+        if not isinstance(d, dict) or k not in d:
             return default
-        d = d.get(k, {})
-    return d if d != {} else default
+        d = d[k]
+    return d
 
 
 class AppConfig:

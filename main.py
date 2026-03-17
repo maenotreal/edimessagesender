@@ -147,30 +147,127 @@ def _extract_order_meta(xml_content: str) -> tuple[str, str]:
 # Проверка статуса ORDERS и поиск входящих DESADV
 # ─────────────────────────────────────────────────────────────────────────────
 
+_DELIVERY_EVENT_STATUSES = {
+    "MessageDelivered":    store.STATUS_DELIVERED,
+    "MessageCheckingOk":   store.STATUS_CHECKING_OK,
+    "MessageCheckingFail": store.STATUS_CHECKING_FAIL,
+    "MessageUndelivered":  store.STATUS_CHECKING_FAIL,
+}
+_ORDRSP_STATUSES = {store.STATUS_ACCEPTED, store.STATUS_REJECTED, store.STATUS_CHANGED}
+
+
+def _handle_delivery_event(etype: str, content: dict, order: dict,
+                           current_status: str) -> tuple[str, int]:
+    """Системное событие доставки. Возвращает (новый_статус, кол-во_изменений)."""
+    out_meta     = content.get("OutboxMessageMeta") or {}
+    event_msg_id = out_meta.get("MessageId", "")
+    orders_msg_id = order.get("message_id", "")
+    if not orders_msg_id or event_msg_id != orders_msg_id:
+        return current_status, 0
+
+    new_status = _DELIVERY_EVENT_STATUSES.get(etype, current_status)
+    if new_status != current_status and current_status not in _ORDRSP_STATUSES:
+        store.update_orders_status(order["id"], new_status)
+        logger.info("Системный статус ORDERS %s → %s", order["order_number"], new_status)
+        return new_status, 1
+    return current_status, 0
+
+
+def _handle_ordrsp(or_elem: ET.Element, order: dict,
+                   current_status: str) -> tuple[str, int]:
+    """Обработка ORDRSP. Возвращает (новый_статус, кол-во_изменений)."""
+    origin = or_elem.find("originOrder")
+    if origin is None or (origin.get("number") or "").strip() != order["order_number"]:
+        return current_status, 0
+
+    ordrsp_status = (or_elem.get("status") or "").strip()
+    new_status = {
+        "Accepted": store.STATUS_ACCEPTED,
+        "Rejected": store.STATUS_REJECTED,
+        "Changed":  store.STATUS_CHANGED,
+    }.get(ordrsp_status, store.STATUS_ACCEPTED)
+
+    if new_status != current_status:
+        store.update_orders_status(order["id"], new_status)
+        logger.info("ORDRSP для %s: status=%s → %s",
+                    order["order_number"], ordrsp_status, new_status)
+        return new_status, 1
+    return current_status, 0
+
+
+def _handle_desadv(da: ET.Element, order: dict, xml_str: str, msg_id: str) -> int:
+    """Обработка DESADV. Возвращает 1 если сохранён новый DESADV, иначе 0."""
+    origin = da.find("originOrder")
+    if origin is None or (origin.get("number") or "").strip() != order["order_number"]:
+        return 0
+
+    result = store.attach_desadv(
+        order_id=order["id"],
+        desadv_number=da.get("number", msg_id),
+        desadv_date=da.get("date", ""),
+        xml_content=xml_str,
+    )
+    return 1 if result else 0
+
+
+def _handle_inbox_message(event: dict, order: dict, current_status: str,
+                           cfg: AppConfig, token: str) -> tuple[str, int, int]:
+    """Обработка NewInboxMessage. Возвращает (новый_статус, new_desadv, status_changes)."""
+    content     = event.get("EventContent") or {}
+    inbox_meta  = content.get("InboxMessageMeta") or {}
+    msg_id      = inbox_meta.get("MessageId", "")
+    doc_type    = ((inbox_meta.get("DocumentDetails") or {}).get("DocumentType") or "").upper()
+
+    if doc_type and doc_type not in ("ORDRSP", "DESADV", "UNKNOWN", ""):
+        return current_status, 0, 0
+    if not msg_id:
+        return current_status, 0, 0
+
+    box_id = order.get("box_id", "")
+    try:
+        xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
+    except RuntimeError as exc:
+        logger.debug("Пропускаем сообщение %s: %s", msg_id, exc)
+        return current_status, 0, 0
+
+    try:
+        root_elem = ET.fromstring(xml_str)
+    except ET.ParseError:
+        return current_status, 0, 0
+
+    ih = root_elem.find("interchangeHeader")
+    if ih is None:
+        return current_status, 0, 0
+    actual_type = (ih.findtext("documentType") or "").strip().upper()
+
+    if actual_type == "ORDRSP":
+        or_elem = root_elem.find("orderResponse")
+        if or_elem is None:
+            return current_status, 0, 0
+        new_status, changes = _handle_ordrsp(or_elem, order, current_status)
+        return new_status, 0, changes
+
+    if actual_type == "DESADV":
+        da = root_elem.find("despatchAdvice")
+        if da is None:
+            return current_status, 0, 0
+        return current_status, _handle_desadv(da, order, xml_str, msg_id), 0
+
+    return current_status, 0, 0
+
+
 def _poll_inbox(order: dict, cfg: AppConfig, token: str) -> tuple[int, int]:
     """
     Опрашивает ящик начиная с даты отправки ORDERS.
-
-    Ищет входящие NewInboxMessage и обрабатывает:
-      - ORDRSP (originOrder/@number == order_number) → обновляет orders_status
-      - DESADV (originOrder/@number == order_number) → сохраняет через attach_desadv
-
-    Дополнительно отслеживает системные события доставки (MessageDelivered и т.п.)
-    по message_id ORDERS как запасной вариант.
-
     Возвращает (новых_desadv, изменений_статуса).
     """
-    box_id        = order.get("box_id", "")
-    sent_at       = order.get("sent_at", "")
-    orders_msg_id = order.get("message_id", "")
+    box_id  = order.get("box_id", "")
+    sent_at = order.get("sent_at", "")
 
     if not box_id:
         logger.warning("box_id не задан для ORDERS %s", order["order_number"])
         return 0, 0
 
-    # API требует формат YYYY-MM-DD или YYYY-MM-DDThh:mm:ss.ss±hh:mm.
-    # Используем только дату — это самый надёжный формат, не требующий
-    # percent-encoding знака '+' в timezone-смещении.
     from_date = sent_at[:10] if sent_at else "2020-01-01"
     logger.info("Опрашиваем ящик %s с %s...", box_id, from_date)
 
@@ -178,7 +275,6 @@ def _poll_inbox(order: dict, cfg: AppConfig, token: str) -> tuple[int, int]:
     try:
         batch = get_events_from(box_id, cfg, token, dl, from_date=from_date)
         all_events.extend(batch.get("Events") or [])
-        # Постранично вычитываем остаток
         last_id = batch.get("LastEventId", "")
         while last_id and len(batch.get("Events") or []) >= 1000:
             batch  = get_events(box_id, cfg, token, dl, exclusive_event_id=last_id)
@@ -201,106 +297,15 @@ def _poll_inbox(order: dict, cfg: AppConfig, token: str) -> tuple[int, int]:
         etype   = event.get("EventType", "")
         content = event.get("EventContent") or {}
 
-        # ── Системные события доставки (запасной вариант контроля) ────────
-        if etype in ("MessageDelivered", "MessageCheckingOk",
-                     "MessageCheckingFail", "MessageUndelivered"):
-            out_meta     = content.get("OutboxMessageMeta") or {}
-            event_msg_id = out_meta.get("MessageId", "")
-            if not orders_msg_id or event_msg_id != orders_msg_id:
-                continue
-            new_status = {
-                "MessageDelivered":    store.STATUS_DELIVERED,
-                "MessageCheckingOk":   store.STATUS_CHECKING_OK,
-                "MessageCheckingFail": store.STATUS_CHECKING_FAIL,
-                "MessageUndelivered":  store.STATUS_CHECKING_FAIL,
-            }.get(etype, current_status)
-            # Не перезаписываем ORDRSP-статус системным событием
-            ordrsp_statuses = {store.STATUS_ACCEPTED, store.STATUS_REJECTED,
-                               store.STATUS_CHANGED}
-            if new_status != current_status and current_status not in ordrsp_statuses:
-                store.update_orders_status(order["id"], new_status)
-                current_status = new_status
-                status_changes += 1
-                logger.info("Системный статус ORDERS %s → %s",
-                            order["order_number"], new_status)
-
-        # ── Входящие сообщения: ORDRSP и DESADV ───────────────────────────
+        if etype in _DELIVERY_EVENT_STATUSES:
+            current_status, changes = _handle_delivery_event(
+                etype, content, order, current_status)
+            status_changes += changes
         elif etype == "NewInboxMessage":
-            inbox_meta  = content.get("InboxMessageMeta") or {}
-            msg_id      = inbox_meta.get("MessageId", "")
-            doc_details = inbox_meta.get("DocumentDetails") or {}
-            doc_type    = (doc_details.get("DocumentType") or "").upper()
-
-            # Быстрая фильтрация по типу документа (если известен)
-            if doc_type and doc_type not in ("ORDRSP", "DESADV", "UNKNOWN", ""):
-                continue
-            if not msg_id:
-                continue
-
-            # Загружаем XML
-            try:
-                xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
-            except RuntimeError as exc:
-                logger.debug("Пропускаем сообщение %s: %s", msg_id, exc)
-                continue
-
-            # Парсим XML
-            try:
-                root_elem = ET.fromstring(xml_str)
-            except ET.ParseError:
-                continue
-
-            ih = root_elem.find("interchangeHeader")
-            if ih is None:
-                continue
-            actual_type = (ih.findtext("documentType") or "").strip().upper()
-
-            # ── ORDRSP — подтверждение / отклонение заказа ────────────────
-            if actual_type == "ORDRSP":
-                or_elem = root_elem.find("orderResponse")
-                if or_elem is None:
-                    continue
-                origin = or_elem.find("originOrder")
-                if origin is None:
-                    continue
-                if (origin.get("number") or "").strip() != order["order_number"]:
-                    continue
-
-                ordrsp_status = (or_elem.get("status") or "").strip()
-                new_status = {
-                    "Accepted": store.STATUS_ACCEPTED,
-                    "Rejected": store.STATUS_REJECTED,
-                    "Changed":  store.STATUS_CHANGED,
-                }.get(ordrsp_status, store.STATUS_ACCEPTED)
-
-                if new_status != current_status:
-                    store.update_orders_status(order["id"], new_status)
-                    current_status = new_status
-                    status_changes += 1
-                    logger.info("ORDRSP для %s: status=%s → %s",
-                                order["order_number"], ordrsp_status, new_status)
-
-            # ── DESADV — уведомление об отгрузке ─────────────────────────
-            elif actual_type == "DESADV":
-                da = root_elem.find("despatchAdvice")
-                if da is None:
-                    continue
-                origin = da.find("originOrder")
-                if origin is None:
-                    continue
-                if (origin.get("number") or "").strip() != order["order_number"]:
-                    continue
-
-                desadv_number = da.get("number", msg_id)
-                desadv_date   = da.get("date", "")
-                result = store.attach_desadv(
-                    order_id=order["id"],
-                    desadv_number=desadv_number,
-                    desadv_date=desadv_date,
-                    xml_content=xml_str,
-                )
-                if result:
-                    new_desadv += 1
+            current_status, nd, sc = _handle_inbox_message(
+                event, order, current_status, cfg, token)
+            new_desadv     += nd
+            status_changes += sc
 
     return new_desadv, status_changes
 
