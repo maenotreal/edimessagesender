@@ -39,12 +39,11 @@ def generate_orders_xml(buyer_gln, seller_gln, line_items, order_number=None):
 
     # Order element
     order = ET.SubElement(root, "order")
-    now_local = datetime.now()
     if order_number is None:
         random_suffix = random.randint(1000, 9999)
-        order_number = f"ORD-{now_local.strftime('%Y%m%d-%H%M%S')}-{random_suffix}"
+        order_number = f"ORD-{now_utc.strftime('%Y%m%d-%H%M%S')}-{random_suffix}"
     order.set("number", order_number)
-    order.set("date", now_local.strftime('%Y-%m-%d'))
+    order.set("date", now_utc.strftime('%Y-%m-%d'))
 
     # Seller (only GLN)
     seller = ET.SubElement(order, "seller")
@@ -108,8 +107,6 @@ def generate_pricat_xml(version, supplier_gln, buyer_gln, line_items,
         Удаление:   03.xml -> 01.xml
         Добавление: 01.xml -> 03.xml
     """
-    from datetime import datetime
-
     pricat_number = supplier_gln
     if buyer_gln and version == 3:
         pricat_number += f"_{buyer_gln}"

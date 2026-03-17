@@ -248,11 +248,11 @@ def build_recadv_xml(
             if diff < 0:
                 nd = ET.SubElement(li, "notDeliveredQuantity",
                                    unitOfMeasure=item.get("uom", "PCE"))
-                nd.text = f"{abs(diff):.3f}"
+                nd.text = f"{abs(diff):g}"
             elif diff > 0:
                 ov = ET.SubElement(li, "overshippedQuantity",
                                    unitOfMeasure=item.get("uom", "PCE"))
-                ov.text = f"{diff:.3f}"
+                ov.text = f"{diff:g}"
         except (ValueError, TypeError):
             pass
 
