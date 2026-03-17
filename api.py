@@ -10,9 +10,18 @@ api.py – HTTP-обёртки над Kontur EDI API.
 
 import base64
 import logging
+import time
 from typing import Any
 
 import requests
+
+_RETRY_ON = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
+_MAX_RETRIES = 3
+_BACKOFF_BASE = 1.0  # секунды
 
 from auth import build_auth_header, get_token, invalidate_token
 from config import AppConfig
@@ -63,10 +72,18 @@ def _request(method: str, path: str, cfg: AppConfig, dl,
             hdrs.update(extra_headers)
         full = requests.Request(method.upper(), url, params=params).prepare().url
         _log_req(dl, method, full, hdrs, data)
-        r = requests.request(method, url, params=params, headers=hdrs,
-                             data=data, timeout=60)
-        _log_resp(dl, r)
-        return r
+        for attempt in range(_MAX_RETRIES):
+            try:
+                r = requests.request(method, url, params=params, headers=hdrs,
+                                     data=data, timeout=60)
+                _log_resp(dl, r)
+                return r
+            except _RETRY_ON as exc:
+                if attempt == _MAX_RETRIES - 1:
+                    raise
+                wait = _BACKOFF_BASE * (2 ** attempt)
+                logger.warning("Сетевая ошибка (%s), повтор через %.0f с...", exc, wait)
+                time.sleep(wait)
 
     resp = _do(token)
 

@@ -230,3 +230,11 @@ class AppConfig:
             ("edi.buyer_gln",  self.buyer_gln),
             ("edi.seller_gln", self.seller_gln),
         ] if not val]
+
+
+def validate_gln(gln: str) -> bool:
+    """Проверить GLN по алгоритму EAN-13 (13 цифр + контрольная сумма)."""
+    if not gln or not gln.isdigit() or len(gln) != 13:
+        return False
+    total = sum(int(d) * (1 if i % 2 == 0 else 3) for i, d in enumerate(gln[:12]))
+    return (10 - total % 10) % 10 == int(gln[12])

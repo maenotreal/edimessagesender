@@ -83,7 +83,7 @@ from api import (
     get_inbox_message_xml,
 )
 from auth import get_token
-from config import AppConfig, CONFIG_FILE, TEST_PARTY_ID, TEST_SENDER_GLN
+from config import AppConfig, CONFIG_FILE, TEST_PARTY_ID, TEST_SENDER_GLN, validate_gln
 from logger import setup_logging
 import store
 import recadv_builder
@@ -277,13 +277,15 @@ def _poll_inbox(order: dict, cfg: AppConfig, token: str) -> tuple[int, int]:
         batch = get_events_from(box_id, cfg, token, dl, from_date=from_date)
         all_events.extend(batch.get("Events") or [])
         last_id = batch.get("LastEventId", "")
-        while last_id:
+        while last_id and len(all_events) < 5000:
             batch  = get_events(box_id, cfg, token, dl, exclusive_event_id=last_id)
             events = batch.get("Events") or []
             all_events.extend(events)
             last_id = batch.get("LastEventId", "")
             if not events:
                 break
+        if len(all_events) >= 5000:
+            logger.warning("Достигнут лимит 5000 событий при опросе ящика")
     except RuntimeError as exc:
         logger.error("Ошибка опроса ящика: %s", exc)
         return 0, 0
@@ -420,6 +422,12 @@ def mode_test_orders(cfg: AppConfig, token: str) -> None:
     shipfrom_gln  = input("  GLN грузоотправителя (shipFrom):  ").strip()
     if not recipient_gln or not shipfrom_gln:
         logger.error("Оба GLN обязательны.")
+        pause(); return
+    if not validate_gln(recipient_gln):
+        logger.error("Некорректный GLN получателя: %s", recipient_gln)
+        pause(); return
+    if not validate_gln(shipfrom_gln):
+        logger.error("Некорректный GLN грузоотправителя: %s", shipfrom_gln)
         pause(); return
 
     PREDEFINED = {
@@ -563,7 +571,13 @@ def mode_pricat(cfg: AppConfig, token: str) -> None:
     if not supplier_gln:
         logger.error("GLN поставщика обязателен.")
         pause(); return
+    if not validate_gln(supplier_gln):
+        logger.error("Некорректный GLN поставщика: %s", supplier_gln)
+        pause(); return
     buyer_gln = input("  GLN покупателя (для 03.xml): ").strip() or None
+    if buyer_gln and not validate_gln(buyer_gln):
+        logger.error("Некорректный GLN покупателя: %s", buyer_gln)
+        pause(); return
 
     # ── Генерация XML ─────────────────────────────────────────────────────────
     line_items   = df.to_dict("records")

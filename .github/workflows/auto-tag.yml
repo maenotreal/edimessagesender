@@ -1,0 +1,48 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# auto-tag.yml — Автоматически создаёт тег при изменении version.json в main
+#
+# Если version в version.json выше последнего тега — создаёт и пушит тег,
+# что запускает release.yml.
+#
+# Пропускает коммиты от github-actions[bot] (бамп версии из release.yml).
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "🏷️ Auto Tag"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - version.json
+
+permissions:
+  contents: write
+
+jobs:
+  auto-tag:
+    name: "Create tag if version bumped"
+    runs-on: ubuntu-latest
+    if: github.actor != 'github-actions[bot]'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check and create tag
+        run: |
+          VERSION=$(python3 -c "import json; print(json.load(open('version.json'))['version'])")
+          TAG="v$VERSION"
+
+          if git tag --list | grep -qx "$TAG"; then
+            echo "Тег $TAG уже существует — пропускаем."
+          else
+            echo "Создаём тег $TAG..."
+            git config user.name  "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG"
+            git push origin "$TAG"
+            echo "Тег $TAG создан и запущен release workflow."
+          fi

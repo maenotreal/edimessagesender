@@ -1363,6 +1363,60 @@ class TestIntegration(StoreIsolationMixin, unittest.TestCase):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Тесты version.json и валидации GLN
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestVersionJson(unittest.TestCase):
+
+    def _load(self):
+        vf = Path(__file__).parent / "version.json"
+        self.assertTrue(vf.exists(), "version.json не найден")
+        return json.loads(vf.read_text(encoding="utf-8"))
+
+    def test_valid_json(self):
+        data = self._load()
+        self.assertIsInstance(data, dict)
+
+    def test_required_fields(self):
+        data = self._load()
+        for field in ("version", "zip_url", "exe_url", "version_url"):
+            self.assertIn(field, data, f"Поле '{field}' отсутствует в version.json")
+            self.assertTrue(data[field], f"Поле '{field}' пустое в version.json")
+
+    def test_version_format(self):
+        data = self._load()
+        parts = data["version"].split(".")
+        self.assertEqual(len(parts), 3, "version должен быть в формате X.Y.Z")
+        for part in parts:
+            self.assertTrue(part.isdigit(), f"Часть версии '{part}' не является числом")
+
+
+class TestValidateGln(unittest.TestCase):
+
+    def setUp(self):
+        import config
+        self.validate_gln = config.validate_gln
+
+    def test_valid_gln(self):
+        # GLN с корректной контрольной суммой EAN-13
+        self.assertTrue(self.validate_gln("4006381333931"))
+
+    def test_invalid_checksum(self):
+        self.assertFalse(self.validate_gln("4006381333930"))
+
+    def test_wrong_length(self):
+        self.assertFalse(self.validate_gln("123456789"))
+        self.assertFalse(self.validate_gln("12345678901234"))
+
+    def test_non_digits(self):
+        self.assertFalse(self.validate_gln("400638133393X"))
+
+    def test_empty(self):
+        self.assertFalse(self.validate_gln(""))
+        self.assertFalse(self.validate_gln(None))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Запуск
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1370,6 +1424,7 @@ if __name__ == "__main__":
     order = [
         TestConfig, TestAuth, TestXmlBuilder, TestRecadvBuilder,
         TestStore, TestApi, TestUpdater, TestIntegration,
+        TestVersionJson, TestValidateGln,
     ]
     loader = unittest.TestLoader()
     suite  = unittest.TestSuite()
