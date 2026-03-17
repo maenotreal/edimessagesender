@@ -25,7 +25,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Установка зависимостей, если есть requirements.txt
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if ( -f requirements.txt ); then pip install -r requirements.txt; fi
           # Установка фреймворка для тестов (например, pytest)
           pip install pytest
 
@@ -39,7 +39,7 @@ jobs:
     name: Create Release
     needs: test
     if: startsWith(github.ref, 'refs/tags/')
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: write # Необходимо для создания релиза в GitHub
     
