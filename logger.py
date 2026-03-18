@@ -1,8 +1,13 @@
 """logger.py – logging setup (console + daily rotating file)."""
 
 import logging
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+
+_BASE_DIR = (Path(sys.executable).parent
+             if getattr(sys, "frozen", False)
+             else Path(__file__).parent)
 
 
 def setup_logging() -> logging.Logger:
@@ -12,7 +17,7 @@ def setup_logging() -> logging.Logger:
       detailed → file only (verbose API traffic, no console)
     Returns the 'detailed' logger.
     """
-    log_dir = Path("logs")
+    log_dir = _BASE_DIR / "logs"
     log_dir.mkdir(exist_ok=True)
 
     today = datetime.now().strftime("%Y-%m-%d")

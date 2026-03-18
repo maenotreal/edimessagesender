@@ -47,8 +47,10 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Путь к конфигу — всегда рядом со скриптом
-_BASE_DIR   = Path(__file__).parent
+# Путь к конфигу — рядом с EXE (frozen) или со скриптом
+_BASE_DIR   = (Path(sys.executable).parent
+               if getattr(sys, "frozen", False)
+               else Path(__file__).parent)
 CONFIG_FILE = _BASE_DIR / "edi_config.json"
 TOKEN_CACHE = _BASE_DIR / ".token_cache.json"
 

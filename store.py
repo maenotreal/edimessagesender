@@ -14,6 +14,7 @@ store.py – локальное хранилище документов EDI.
 
 import json
 import logging
+import sys
 import threading
 import uuid
 from datetime import datetime, timedelta
@@ -23,7 +24,9 @@ logger = logging.getLogger(__name__)
 
 _store_lock = threading.Lock()
 
-_BASE_DIR  = Path(__file__).parent
+_BASE_DIR  = (Path(sys.executable).parent
+              if getattr(sys, "frozen", False)
+              else Path(__file__).parent)
 STORE_FILE = _BASE_DIR / "edi_store.json"
 DOCS_DIR   = _BASE_DIR / "edi_documents"
 
