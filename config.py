@@ -54,7 +54,7 @@ _BASE_DIR   = (Path(sys.executable).parent
 CONFIG_FILE = _BASE_DIR / "edi_config.json"
 TOKEN_CACHE = _BASE_DIR / ".token_cache.json"
 
-# Kontur OIDC endpoints (не меняются)
+# Kontur OIDC endpoints (единый Identity-сервер для тест/прод)
 OIDC_ISSUER     = "https://identity.kontur.ru"
 OIDC_DEVICE_URL = f"{OIDC_ISSUER}/connect/deviceauthorization"
 OIDC_TOKEN_URL  = f"{OIDC_ISSUER}/connect/token"
@@ -73,7 +73,7 @@ DEFAULT_CONFIG: dict = {
     "oidc": {
         "client_id":     "",
         "client_secret": "",
-        "scope":         "edi-public-api-staging",
+        "scope":         "openid offline_access edi-public-api-staging",
     },
     "legacy": {
         "api_client_id": "",

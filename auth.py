@@ -58,11 +58,21 @@ def _is_fresh(cache: dict, key: str = "expiry", buffer: int = 0) -> bool:
 # OIDC — Device Authorization Flow
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _ensure_required_scopes(scope: str) -> str:
+    """Гарантировать наличие 'openid' и 'offline_access' в scope."""
+    parts = scope.split()
+    for required in ("offline_access", "openid"):
+        if required not in parts:
+            parts.insert(0, required)
+    return " ".join(parts)
+
+
 def _device_flow(cfg: AppConfig, dl) -> dict:
+    scope = _ensure_required_scopes(cfg.oidc_scope)
     payload = {
         "client_id":     cfg.oidc_client_id,
         "client_secret": cfg.oidc_client_secret,
-        "scope":         cfg.oidc_scope,
+        "scope":         scope,
     }
     dl.info("OIDC Device Auth → POST %s", OIDC_DEVICE_URL)
     resp = requests.post(OIDC_DEVICE_URL, data=payload, timeout=30)
