@@ -905,61 +905,6 @@ HANDLERS = {
     "6": mode_storage,
 }
 
-# ── Пасхалка ─────────────────────────────────────────────────────────────────
-
-def _generate_art(img_path: str, target_cols: int = 55,
-                  threshold: int = 140, aspect: float = 0.58) -> str:
-    """Конвертировать изображение в Braille Unicode-арт."""
-    from PIL import Image
-    DOT_MAP = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80]
-    DOT_POS = [(0,0),(1,0),(2,0),(3,0),(0,1),(1,1),(2,1),(3,1)]
-    img = Image.open(img_path).convert('L')
-    tw  = (target_cols * 2 // 2) * 2
-    th  = (int(img.size[1] * tw / img.size[0] * aspect) // 4) * 4
-    img = img.resize((tw, th), Image.LANCZOS)
-    px  = list(img.getdata())
-    rows = []
-    for br in range(0, th, 4):
-        row = []
-        for bc in range(0, tw, 2):
-            bits = 0
-            for di, (dr, dc) in enumerate(DOT_POS):
-                py, bx = br + dr, bc + dc
-                if py < th and bx < tw and px[py * tw + bx] < threshold:
-                    bits |= DOT_MAP[di]
-            row.append(chr(0x2800 + bits))
-        rows.append(''.join(row))
-    return '\n'.join(rows)
-
-
-def _easter_enabled() -> bool:
-    return store._load().get("_easter", False)
-
-
-def _easter_activate() -> None:
-    """Активировать пасхалку: сгенерировать арт из изображения и сохранить."""
-    data = store._load()
-    if data.get("_easter"):
-        return
-    img_path = Path(__file__).parent / "joker.png"
-    if img_path.exists():
-        try:
-            data["_easter"]     = True
-            data["_easter_art"] = _generate_art(str(img_path))
-            store._save(data)
-            return
-        except Exception:
-            pass
-    data["_easter"] = True
-    store._save(data)
-
-
-def _print_easter() -> None:
-    art = store._load().get("_easter_art", "")
-    if art:
-        print(art)
-        print()
-
 
 
 def main() -> None:
@@ -990,8 +935,6 @@ def main() -> None:
 
     while True:
         clr()
-        if _easter_enabled():
-            _print_easter()
         print(MENU)
         orders_count = len(store.get_all_orders())
         print(f"  Конфиг: {CONFIG_FILE}  |  Режим: {cfg.auth_mode.upper()}")
@@ -1020,9 +963,7 @@ def main() -> None:
             input("  Enter...")
             continue
 
-        if choice == "увы":
-            _easter_activate()
-        elif choice in HANDLERS:
+        if choice in HANDLERS:
             clr()
             try:
                 HANDLERS[choice](cfg, token)

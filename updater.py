@@ -41,7 +41,6 @@ PRESERVE = {
     ".token_cache.json",
     "edi_documents",
     "logs",
-    "joker.png",
 }
 
 
