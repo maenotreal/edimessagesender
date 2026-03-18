@@ -381,7 +381,11 @@ def mode_send_existing(cfg: AppConfig, token: str) -> None:
         logger.error("Файл не найден: %s", file_path)
         pause(); return
 
-    xml_bytes   = path.read_bytes()
+    try:
+        xml_bytes = path.read_bytes()
+    except OSError as exc:
+        logger.error("Не удалось прочитать файл: %s", exc)
+        pause(); return
     xml_content = xml_bytes.decode("utf-8", errors="replace")
 
     try:
