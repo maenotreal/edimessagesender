@@ -3,6 +3,6 @@
   "zip_url": "https://github.com/maenotreal/edimessagesender/releases/latest/download/EdiMessageSender.zip",
   "exe_url": "https://github.com/maenotreal/edimessagesender/releases/latest/download/edimessagesender.exe",
   "version_url": "https://raw.githubusercontent.com/maenotreal/edimessagesender/main/version.json",
-  "sha256_zip": "80e6b39bc02174bbd689ba3fa8b3163149c7973d52f1f59cb1aa436219cbb2bb",
-  "sha256_exe": "b5643607ee1b4d3630636070efab749ade3003d8688d85c4db1f35cea563f6c3"
+  "sha256_zip": "980948bc646105dc71de4b728c7f1437f2a53aeedbbbcf290fe70cd8ce1eeabe",
+  "sha256_exe": "35fc246afa055a3162a54dff7c7f02fbf5ad271ef3715f864c0aae6c4090e156"
 }
