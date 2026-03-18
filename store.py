@@ -47,7 +47,7 @@ def _load() -> dict:
     try:
         return json.loads(STORE_FILE.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning("Не удалось прочитать хранилище: %s", exc)
+        logger.error("Хранилище повреждено, данные недоступны: %s", exc)
         return {"orders": []}
 
 
