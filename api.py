@@ -23,7 +23,6 @@ _RETRY_ON = (
 _MAX_RETRIES = 3
 _BACKOFF_BASE = 1.0   # секунды
 _REQUEST_TIMEOUT = 60  # секунды
-_REQUEST_TIMEOUT = 60  # секунды
 
 from auth import build_auth_header, get_token, invalidate_token
 from config import AppConfig
