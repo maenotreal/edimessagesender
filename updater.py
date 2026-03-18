@@ -16,6 +16,7 @@ updater.py — автообновление EDI Message Sender с GitHub.
     edimessagesender.exe и прикрепит их к релизу
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -80,22 +81,38 @@ def _remote_info(version_url: str) -> Optional[dict]:
 # ── Загрузка ──────────────────────────────────────────────────────────────────
 
 def _download(url: str, dest: Path) -> bool:
-    """Скачать файл по URL в dest с progress-баром."""
+    """Скачать файл потоково с progress-баром."""
     try:
-        import urllib.request
-
-        def _progress(count, block, total):
-            if total > 0:
-                pct = min(100, int(count * block * 100 / total))
-                bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
-                print(f"\r  [{bar}] {pct}%", end="", flush=True)
-
-        urllib.request.urlretrieve(url, str(dest), reporthook=_progress)
+        import requests as req
+        resp = req.get(url, stream=True, timeout=TIMEOUT,
+                       headers={"User-Agent": "EdiMessageSender-Updater/1.0"})
+        resp.raise_for_status()
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = min(100, int(downloaded * 100 / total))
+                    bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                    print(f"\r  [{bar}] {pct}%", end="", flush=True)
         print()
         return True
     except Exception as exc:
         print(f"\n  Ошибка загрузки: {exc}")
         return False
+
+
+def _verify_sha256(path: Path, expected: str) -> bool:
+    """Проверить SHA256 файла. Пустой expected — пропустить проверку."""
+    if not expected:
+        return True
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest().lower() == expected.lower()
 
 
 # ── Установка: EXE-режим ──────────────────────────────────────────────────────
@@ -252,6 +269,10 @@ def check_and_update(silent: bool = False) -> None:
                 print("  Обновление не выполнено.")
                 return
 
+            if not _verify_sha256(dl_path, remote.get("sha256_exe", "")):
+                print("  Ошибка: контрольная сумма не совпадает — файл повреждён или подменён.")
+                return
+
             print("  Устанавливаю...")
             if not _install_exe(dl_path):
                 print("  Обновление не выполнено.")
@@ -268,6 +289,10 @@ def check_and_update(silent: bool = False) -> None:
             zip_path = Path(tmp) / "update.zip"
             if not _download(remote_zip_url, zip_path):
                 print("  Обновление не выполнено.")
+                return
+
+            if not _verify_sha256(zip_path, remote.get("sha256_zip", "")):
+                print("  Ошибка: контрольная сумма не совпадает — файл повреждён или подменён.")
                 return
 
             print("  Устанавливаю...")

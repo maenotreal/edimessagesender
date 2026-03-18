@@ -111,33 +111,6 @@ jobs:
           name: edimessagesender-exe
           path: dist/
 
-      # ── Обновляем version.json ──────────────────────────────────────────────
-      - name: Update version.json
-        run: |
-          python3 -c "
-          import json
-          with open('version.json', 'r', encoding='utf-8') as f:
-              data = json.load(f)
-          data['version'] = '${{ steps.version.outputs.version }}'
-          with open('version.json', 'w', encoding='utf-8') as f:
-              json.dump(data, f, indent=2, ensure_ascii=False)
-              f.write('\n')
-          print('version.json updated to ' + data['version'])
-          "
-
-      # ── Коммитим обновлённый version.json ──────────────────────────────────
-      - name: Commit updated version.json
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add version.json
-          if git diff --staged --quiet; then
-            echo "version.json уже актуален — коммит не нужен."
-          else
-            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
-            git push origin HEAD:main
-          fi
-
       # ── Собираем ZIP ────────────────────────────────────────────────────────
       - name: Package release archive
         run: |
@@ -164,6 +137,46 @@ jobs:
 
           echo "📦 Archive contents:"
           unzip -l dist/EdiMessageSender.zip
+
+      # ── Вычисляем SHA256 для обоих артефактов ───────────────────────────────
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          SHA256_ZIP=$(sha256sum dist/EdiMessageSender.zip | awk '{print $1}')
+          SHA256_EXE=$(sha256sum dist/edimessagesender.exe | awk '{print $1}')
+          echo "sha256_zip=$SHA256_ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha256_exe=$SHA256_EXE" >> "$GITHUB_OUTPUT"
+          echo "SHA256 ZIP: $SHA256_ZIP"
+          echo "SHA256 EXE: $SHA256_EXE"
+
+      # ── Обновляем version.json (версия + контрольные суммы) ─────────────────
+      - name: Update version.json
+        run: |
+          python3 -c "
+          import json
+          with open('version.json', 'r', encoding='utf-8') as f:
+              data = json.load(f)
+          data['version']    = '${{ steps.version.outputs.version }}'
+          data['sha256_zip'] = '${{ steps.checksums.outputs.sha256_zip }}'
+          data['sha256_exe'] = '${{ steps.checksums.outputs.sha256_exe }}'
+          with open('version.json', 'w', encoding='utf-8') as f:
+              json.dump(data, f, indent=2, ensure_ascii=False)
+              f.write('\n')
+          print('version.json updated to ' + data['version'])
+          "
+
+      # ── Коммитим обновлённый version.json ──────────────────────────────────
+      - name: Commit updated version.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version.json
+          if git diff --staged --quiet; then
+            echo "version.json уже актуален — коммит не нужен."
+          else
+            git commit -m "chore: bump version to ${{ steps.version.outputs.version }}"
+            git push origin HEAD:main
+          fi
 
       # ── Генерируем changelog ────────────────────────────────────────────────
       - name: Generate changelog

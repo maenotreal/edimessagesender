@@ -1229,6 +1229,32 @@ class TestUpdater(unittest.TestCase):
                             with self.assertRaises(SystemExit):
                                 self.up.check_and_update(silent=False)
 
+    # ── _verify_sha256 ────────────────────────────────────────────────────────
+
+    def test_verify_sha256_correct(self):
+        f = self.base / "test.bin"
+        f.write_bytes(b"hello world")
+        import hashlib
+        expected = hashlib.sha256(b"hello world").hexdigest()
+        self.assertTrue(self.up._verify_sha256(f, expected))
+
+    def test_verify_sha256_wrong(self):
+        f = self.base / "test.bin"
+        f.write_bytes(b"hello world")
+        self.assertFalse(self.up._verify_sha256(f, "0" * 64))
+
+    def test_verify_sha256_empty_skips(self):
+        f = self.base / "test.bin"
+        f.write_bytes(b"anything")
+        self.assertTrue(self.up._verify_sha256(f, ""))
+
+    def test_verify_sha256_case_insensitive(self):
+        f = self.base / "test.bin"
+        f.write_bytes(b"hello world")
+        import hashlib
+        expected = hashlib.sha256(b"hello world").hexdigest().upper()
+        self.assertTrue(self.up._verify_sha256(f, expected))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Интеграционные тесты
@@ -1380,6 +1406,10 @@ class TestVersionJson(unittest.TestCase):
         self.assertEqual(len(parts), 3, "version должен быть в формате X.Y.Z")
         for part in parts:
             self.assertTrue(part.isdigit(), f"Часть версии '{part}' не является числом")
+
+    def test_sha256_fields_present(self):
+        for field in ("sha256_zip", "sha256_exe"):
+            self.assertIn(field, self._data, f"Поле '{field}' отсутствует в version.json")
 
 
 class TestValidateGln(unittest.TestCase):
