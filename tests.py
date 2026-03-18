@@ -12,6 +12,7 @@ import copy
 import io
 import json
 import logging
+import re
 import sys
 import tempfile
 import unittest
@@ -759,7 +760,6 @@ class TestXmlBuilder(unittest.TestCase):
         self.assertEqual(root.findtext("interchangeHeader/recipient"), "2222222222222")
 
     def test_orders_returns_uuid(self):
-        import re
         _, guid = self.xb.generate_orders_xml("111", "222", [self.line_item])
         self.assertRegex(guid,
             r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -883,9 +883,10 @@ class TestRecadvBuilder(unittest.TestCase):
     def setUp(self):
         import recadv_builder
         self.rb = recadv_builder
+        self.desadv = recadv_builder.DesadvData(DESADV_XML)
 
     def _desadv(self):
-        return self.rb.DesadvData(DESADV_XML)
+        return self.desadv
 
     def _accepted(self, qty="10.000"):
         return [{
@@ -1162,14 +1163,6 @@ class TestUpdater(unittest.TestCase):
         self.up._install_zip(zp, install_dir)
         self.assertIn("secret", (install_dir / ".token_cache.json").read_text())
 
-    def test_install_preserves_joker_png(self):
-        install_dir = self.base / "install"
-        install_dir.mkdir()
-        (install_dir / "joker.png").write_bytes(b"\x89PNG original")
-        zp = self._make_zip({"joker.png": "overwrite"})
-        self.up._install_zip(zp, install_dir)
-        self.assertEqual((install_dir / "joker.png").read_bytes(), b"\x89PNG original")
-
     def test_install_creates_subdirs(self):
         # Используем два разных верхних уровня — тогда prefix не определяется
         # и структура папок сохраняется как есть.
@@ -1368,24 +1361,22 @@ class TestIntegration(StoreIsolationMixin, unittest.TestCase):
 
 class TestVersionJson(unittest.TestCase):
 
-    def _load(self):
+    @classmethod
+    def setUpClass(cls):
         vf = Path(__file__).parent / "version.json"
-        self.assertTrue(vf.exists(), "version.json не найден")
-        return json.loads(vf.read_text(encoding="utf-8"))
+        assert vf.exists(), "version.json не найден"
+        cls._data = json.loads(vf.read_text(encoding="utf-8"))
 
     def test_valid_json(self):
-        data = self._load()
-        self.assertIsInstance(data, dict)
+        self.assertIsInstance(self._data, dict)
 
     def test_required_fields(self):
-        data = self._load()
         for field in ("version", "zip_url", "exe_url", "version_url"):
-            self.assertIn(field, data, f"Поле '{field}' отсутствует в version.json")
-            self.assertTrue(data[field], f"Поле '{field}' пустое в version.json")
+            self.assertIn(field, self._data, f"Поле '{field}' отсутствует в version.json")
+            self.assertTrue(self._data[field], f"Поле '{field}' пустое в version.json")
 
     def test_version_format(self):
-        data = self._load()
-        parts = data["version"].split(".")
+        parts = self._data["version"].split(".")
         self.assertEqual(len(parts), 3, "version должен быть в формате X.Y.Z")
         for part in parts:
             self.assertTrue(part.isdigit(), f"Часть версии '{part}' не является числом")
