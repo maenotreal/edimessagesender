@@ -18,7 +18,6 @@ updater.py — автообновление EDI Message Sender с GitHub.
 
 import hashlib
 import json
-import os
 import sys
 import zipfile
 import subprocess
@@ -55,13 +54,29 @@ def _parse_version(v: str) -> tuple:
         return (0,)
 
 
+def _bundled_version_file() -> Optional[Path]:
+    """Путь к version.json внутри PyInstaller-бандла (только чтение)."""
+    if IS_FROZEN:
+        p = Path(getattr(sys, "_MEIPASS", "")) / "version.json"
+        if p.exists():
+            return p
+    return None
+
+
+def _read_version_data() -> Optional[dict]:
+    """Читает version.json: сначала рядом с EXE/скриптом, затем из бандла."""
+    for source in (VERSION_FILE, _bundled_version_file()):
+        if source and source.exists():
+            try:
+                return json.loads(source.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+    return None
+
+
 def _local_version() -> Optional[str]:
-    if not VERSION_FILE.exists():
-        return None
-    try:
-        return json.loads(VERSION_FILE.read_text(encoding="utf-8")).get("version")
-    except Exception:
-        return None
+    data = _read_version_data()
+    return data.get("version") if data else None
 
 
 def _remote_info(version_url: str) -> Optional[dict]:
@@ -129,19 +144,18 @@ def _install_exe(new_exe_path: Path) -> bool:
         current_exe = Path(sys.executable).resolve()
         staged_exe  = current_exe.with_name(current_exe.stem + "_update.exe")
         bat_path    = current_exe.parent / "_edi_update.bat"
-        pid         = os.getpid()
 
         shutil.copy2(new_exe_path, staged_exe)
 
         bat_path.write_text(
             "@echo off\n"
-            ":wait\n"
-            f'tasklist /FI "PID eq {pid}" 2>NUL | find "{pid}" >NUL\n'
-            "if not errorlevel 1 (\n"
+            "timeout /t 2 /nobreak >NUL\n"
+            ":retry\n"
+            f'move /Y "{staged_exe}" "{current_exe}" >NUL 2>&1\n'
+            "if errorlevel 1 (\n"
             "  timeout /t 1 /nobreak >NUL\n"
-            "  goto wait\n"
+            "  goto retry\n"
             ")\n"
-            f'move /Y "{staged_exe}" "{current_exe}"\n'
             f'start "" "{current_exe}"\n'
             'del "%~f0"\n',
             encoding="ascii",
@@ -210,18 +224,18 @@ def check_and_update(silent: bool = False) -> None:
 
     silent=True: если нет обновления или нет сети — ничего не печатает.
     """
-    local_v = _local_version()
-    if not local_v:
+    cfg = _read_version_data()
+    if not cfg:
         if not silent:
             print("  version.json не найден — проверка обновлений недоступна.")
         return
 
-    try:
-        cfg         = json.loads(VERSION_FILE.read_text(encoding="utf-8"))
-        version_url = cfg.get("version_url", "")
-        zip_url     = cfg.get("zip_url", "")
-        exe_url     = cfg.get("exe_url", "")
-    except Exception:
+    local_v     = cfg.get("version", "")
+    version_url = cfg.get("version_url", "")
+    zip_url     = cfg.get("zip_url", "")
+    exe_url     = cfg.get("exe_url", "")
+
+    if not local_v:
         return
 
     if not version_url:
