@@ -109,7 +109,10 @@ def _device_flow(cfg: AppConfig, dl) -> dict:
             logger.info("OIDC авторизация успешна.")
             return r.json()
 
-        err = r.json().get("error", "")
+        try:
+            err = r.json().get("error", "")
+        except ValueError:
+            raise RuntimeError(f"Неожиданный ответ сервера ({r.status_code}): {r.text}")
         if err == "authorization_pending":
             continue
         if err == "slow_down":
