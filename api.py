@@ -10,6 +10,7 @@ api.py – HTTP-обёртки над Kontur EDI API.
 
 import base64
 import logging
+import random
 import time
 from typing import Any
 
@@ -82,8 +83,8 @@ def _request(method: str, path: str, cfg: AppConfig, dl,
             except _RETRY_ON as exc:
                 if attempt == _MAX_RETRIES - 1:
                     raise
-                wait = _BACKOFF_BASE * (2 ** attempt)
-                logger.warning("Сетевая ошибка (%s), повтор через %.0f с...", exc, wait)
+                wait = _BACKOFF_BASE * (2 ** attempt) + random.uniform(0, 1)
+                logger.warning("Сетевая ошибка (%s), повтор через %.1f с...", exc, wait)
                 time.sleep(wait)
 
     resp = _do(token)
