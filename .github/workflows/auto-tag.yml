@@ -38,6 +38,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
 
+      - name: Configure git remote with PAT
+        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/${{ github.repository }}.git
+
       - name: Calculate version bump and create tag
         run: |
           python3 -u - <<'PYEOF'
