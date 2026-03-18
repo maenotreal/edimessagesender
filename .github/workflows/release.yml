@@ -72,7 +72,6 @@ jobs:
       - name: Build EXE
         run: |
           python -m PyInstaller --onefile --console --name edimessagesender `
-            --add-data "joker.png;." `
             --add-data "version.json;." `
             main.py
 
