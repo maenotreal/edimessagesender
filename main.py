@@ -91,6 +91,7 @@ import xml_builder
 
 logger = logging.getLogger(__name__)
 dl: logging.Logger = None   # detailed logger
+_ll: logging.Logger = logging.getLogger("listener")  # listener-specific logger
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,7 +438,7 @@ def _listener_save_state(state: dict) -> None:
             json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
         )
     except Exception as exc:
-        logger.warning("Не удалось сохранить состояние слушателя: %s", exc)
+        _ll.warning("Не удалось сохранить состояние слушателя: %s", exc)
 
 
 def _listener_handle_porders(msg_id: str, box_id: str,
@@ -446,13 +447,13 @@ def _listener_handle_porders(msg_id: str, box_id: str,
     try:
         xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
     except RuntimeError as exc:
-        logger.error("[Listener] Не удалось получить PORDERS %s: %s", msg_id, exc)
+        _ll.error("[Listener] Не удалось получить PORDERS %s: %s", msg_id, exc)
         return
 
     try:
         orders_xml, orders_msg_id, porders_num = xml_builder.generate_orders_from_porders(xml_str)
     except ValueError as exc:
-        logger.error("[Listener] Ошибка формирования ORDERS из PORDERS %s: %s", msg_id, exc)
+        _ll.error("[Listener] Ошибка формирования ORDERS из PORDERS %s: %s", msg_id, exc)
         return
 
     order_number, order_date = _extract_order_meta(orders_xml)
@@ -461,7 +462,7 @@ def _listener_handle_porders(msg_id: str, box_id: str,
                             f"ORDERS_{orders_msg_id}.xml")
         doc_circ_id = resp.get("DocumentCirculationId", "")
         message_id  = resp.get("MessageId", "")
-        logger.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен (CircId: %s)",
+        _ll.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен (CircId: %s)",
                     porders_num, order_number, doc_circ_id)
         store.save_orders(
             order_number=order_number, order_date=order_date,
@@ -470,7 +471,7 @@ def _listener_handle_porders(msg_id: str, box_id: str,
             doc_circ_id=doc_circ_id, message_id=message_id,
         )
     except RuntimeError as exc:
-        logger.error("[Listener] Ошибка отправки ORDERS для PORDERS %s: %s",
+        _ll.error("[Listener] Ошибка отправки ORDERS для PORDERS %s: %s",
                      porders_num, exc)
 
 
@@ -480,23 +481,23 @@ def _listener_handle_desadv(msg_id: str, box_id: str,
     try:
         xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
     except RuntimeError as exc:
-        logger.error("[Listener] Не удалось получить DESADV %s: %s", msg_id, exc)
+        _ll.error("[Listener] Не удалось получить DESADV %s: %s", msg_id, exc)
         return
 
     try:
         recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
     except (ValueError, Exception) as exc:
-        logger.error("[Listener] Ошибка формирования RECADV для DESADV %s: %s", msg_id, exc)
+        _ll.error("[Listener] Ошибка формирования RECADV для DESADV %s: %s", msg_id, exc)
         return
 
     try:
         resp = send_message(box_id, cfg, token, dl, recadv_xml,
                             f"RECADV_{recadv_number}.xml")
         doc_circ_id = resp.get("DocumentCirculationId", "")
-        logger.info("[Listener] ✅ DESADV %s → RECADV %s отправлен (CircId: %s)",
+        _ll.info("[Listener] ✅ DESADV %s → RECADV %s отправлен (CircId: %s)",
                     msg_id, recadv_number, doc_circ_id)
     except RuntimeError as exc:
-        logger.error("[Listener] Ошибка отправки RECADV для DESADV %s: %s",
+        _ll.error("[Listener] Ошибка отправки RECADV для DESADV %s: %s",
                      msg_id, exc)
 
 
@@ -516,11 +517,11 @@ def _listener_process_events(events: list[dict], box_id: str,
             continue
 
         if doc_type == "PORDERS":
-            logger.info("[Listener] 📥 Получен PORDERS (msg_id=%s)", msg_id)
+            _ll.info("[Listener] 📥 Получен PORDERS (msg_id=%s)", msg_id)
             _listener_handle_porders(msg_id, box_id, cfg, token)
 
         elif doc_type == "DESADV":
-            logger.info("[Listener] 📥 Получен DESADV (msg_id=%s)", msg_id)
+            _ll.info("[Listener] 📥 Получен DESADV (msg_id=%s)", msg_id)
             _listener_handle_desadv(msg_id, box_id, cfg, token)
 
         elif doc_type in ("UNKNOWN", ""):
@@ -532,7 +533,7 @@ def _listener_process_events(events: list[dict], box_id: str,
                 if ih is not None:
                     actual = (ih.findtext("documentType") or "").strip().upper()
                     if actual == "PORDERS":
-                        logger.info("[Listener] 📥 Получен PORDERS (определён вручную, msg_id=%s)", msg_id)
+                        _ll.info("[Listener] 📥 Получен PORDERS (определён вручную, msg_id=%s)", msg_id)
                         _listener_handle_porders.__wrapped__ = True
                         # Передаём уже загруженный XML напрямую
                         try:
@@ -540,7 +541,7 @@ def _listener_process_events(events: list[dict], box_id: str,
                             order_number, order_date = _extract_order_meta(orders_xml)
                             resp = send_message(box_id, cfg, token, dl, orders_xml,
                                                 f"ORDERS_{orders_msg_id}.xml")
-                            logger.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен",
+                            _ll.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен",
                                         porders_num, order_number)
                             store.save_orders(
                                 order_number=order_number, order_date=order_date,
@@ -550,18 +551,18 @@ def _listener_process_events(events: list[dict], box_id: str,
                                 message_id=resp.get("MessageId", ""),
                             )
                         except Exception as exc2:
-                            logger.error("[Listener] Ошибка обработки PORDERS: %s", exc2)
+                            _ll.error("[Listener] Ошибка обработки PORDERS: %s", exc2)
 
                     elif actual == "DESADV":
-                        logger.info("[Listener] 📥 Получен DESADV (определён вручную, msg_id=%s)", msg_id)
+                        _ll.info("[Listener] 📥 Получен DESADV (определён вручную, msg_id=%s)", msg_id)
                         try:
                             recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
                             resp = send_message(box_id, cfg, token, dl, recadv_xml,
                                                 f"RECADV_{recadv_number}.xml")
-                            logger.info("[Listener] ✅ DESADV %s → RECADV %s отправлен",
+                            _ll.info("[Listener] ✅ DESADV %s → RECADV %s отправлен",
                                         msg_id, recadv_number)
                         except Exception as exc2:
-                            logger.error("[Listener] Ошибка обработки DESADV: %s", exc2)
+                            _ll.error("[Listener] Ошибка обработки DESADV: %s", exc2)
             except Exception:
                 pass
 
@@ -600,8 +601,8 @@ def mode_listener(cfg: AppConfig, token: str) -> None:
     print(f"  ║  Выход : Ctrl+C{' ':<34}║")
     print(f"  ╚══════════════════════════════════════════════════╝\n")
 
-    logger.info("[Listener] Старт. box_id=%s, last_event_id=%s",
-                box_id, last_event_id or "(начало)")
+    _ll.info("[Listener] Старт. box_id=%s, last_event_id=%s",
+             box_id, last_event_id or "(начало)")
 
     try:
         while True:
@@ -629,22 +630,22 @@ def mode_listener(cfg: AppConfig, token: str) -> None:
                         break
 
                 if events:
-                    logger.info("[Listener] Новых событий: %d", len(events))
+                    _ll.info("[Listener] Новых событий: %d", len(events))
                     _listener_process_events(events, box_id, cfg, token)
                     last_event_id = new_last_id
                     state[box_id]  = last_event_id
                     _listener_save_state(state)
                 else:
-                    logger.debug("[Listener] Нет новых событий.")
+                    _ll.debug("[Listener] Нет новых событий.")
 
             except RuntimeError as exc:
-                logger.error("[Listener] Ошибка опроса: %s", exc)
+                _ll.error("[Listener] Ошибка опроса: %s", exc)
 
             _time.sleep(_LISTENER_POLL_INTERVAL)
 
     except KeyboardInterrupt:
         print("\n\n  [Listener] Остановлено пользователем.")
-        logger.info("[Listener] Остановлен (Ctrl+C).")
+        _ll.info("[Listener] Остановлен (Ctrl+C).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

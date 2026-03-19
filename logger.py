@@ -63,5 +63,17 @@ def setup_logging() -> logging.Logger:
     if not detailed.handlers:
         detailed.addHandler(fh)
 
+    # Listener logger → отдельный файл (только события слушателя, без HTTP-шума)
+    listener_log = log_dir / f"listener_{today}.txt"
+    lfh = logging.FileHandler(listener_log, mode="a", encoding="utf-8")
+    lfh.setLevel(logging.DEBUG)
+    lfh.setFormatter(fmt)
+
+    ll = logging.getLogger("listener")
+    ll.setLevel(logging.DEBUG)
+    ll.propagate = True   # дублируем и в основной лог
+    if not ll.handlers:
+        ll.addHandler(lfh)
+
     logging.getLogger(__name__).info("Логи: %s", today_log)
     return detailed
