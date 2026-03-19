@@ -412,87 +412,239 @@ def mode_send_existing(cfg: AppConfig, token: str) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Режим 3 – тестовый ORDERS
+# Режим 3 – Прослушивание: авто-ответ на PORDERS и DESADV
 # ─────────────────────────────────────────────────────────────────────────────
 
-def mode_test_orders(cfg: AppConfig, token: str) -> None:
+import time as _time
+
+_LISTENER_STATE_FILE = Path(__file__).parent / "listener_state.json"
+_LISTENER_POLL_INTERVAL = 30   # секунд между опросами
+
+
+def _listener_load_state() -> dict:
+    """Загрузить состояние слушателя (last_event_id на каждый ящик)."""
     try:
-        box_id = get_box_id(TEST_PARTY_ID, cfg, token, dl)
+        if _LISTENER_STATE_FILE.exists():
+            return json.loads(_LISTENER_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _listener_save_state(state: dict) -> None:
+    try:
+        _LISTENER_STATE_FILE.write_text(
+            json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as exc:
+        logger.warning("Не удалось сохранить состояние слушателя: %s", exc)
+
+
+def _listener_handle_porders(msg_id: str, box_id: str,
+                              cfg: AppConfig, token: str) -> None:
+    """Получить PORDERS, сгенерировать ORDERS и отправить в ответ."""
+    try:
+        xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
     except RuntimeError as exc:
-        logger.error("Ошибка boxId: %s", exc)
-        pause(); return
-
-    recipient_gln = input("  GLN получателя (seller/customer): ").strip()
-    shipfrom_gln  = input("  GLN грузоотправителя (shipFrom):  ").strip()
-    if not recipient_gln or not shipfrom_gln:
-        logger.error("Оба GLN обязательны.")
-        pause(); return
-    if not validate_gln(recipient_gln):
-        logger.error("Некорректный GLN получателя: %s", recipient_gln)
-        pause(); return
-    if not validate_gln(shipfrom_gln):
-        logger.error("Некорректный GLN грузоотправителя: %s", shipfrom_gln)
-        pause(); return
-
-    PREDEFINED = {
-        "gtin": "000001", "internal_buyer_code": "10001",
-        "description": "Тест", "requested_quantity": "100.000",
-        "unit_of_measure": "PCE", "net_price": "100.0000", "vat_rate": "22",
-    }
-
-    line_items = []
-    print("\n  Позиции заказа:")
-    print("  1. Предустановленная  2. Ввести вручную")
-    while True:
-        ch = input("  Выбор (1/2, Enter – завершить): ").strip()
-        if not ch:
-            break
-        if ch == "1":
-            line_items.append(PREDEFINED.copy())
-            print("  ✓ Добавлена предустановленная позиция.")
-        elif ch == "2":
-            li = xml_builder.input_full_line_item_manually(len(line_items) + 1)
-            if li:
-                line_items.append(li)
-        else:
-            print("  Неверный выбор."); continue
-        if input("  Добавить ещё? (y/n): ").strip().lower() != "y":
-            break
-
-    if not line_items:
-        logger.warning("Нет позиций — отмена.")
-        pause(); return
-
-    xml_content, msg_id = xml_builder.generate_orders_xml(
-        buyer_gln=TEST_SENDER_GLN, seller_gln=recipient_gln, line_items=line_items
-    )
-    root = ET.fromstring(xml_content)
-    di = root.find(".//deliveryInfo")
-    if di is not None:
-        sf = di.find("shipFrom/gln")
-        if sf is not None: sf.text = shipfrom_gln
-        st = di.find("shipTo/gln")
-        if st is not None: st.text = TEST_SENDER_GLN
-    ET.indent(root, space="  ")
-    xml_content = '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode")
-    order_number, order_date = _extract_order_meta(xml_content)
+        logger.error("[Listener] Не удалось получить PORDERS %s: %s", msg_id, exc)
+        return
 
     try:
-        resp = send_message(box_id, cfg, token, dl, xml_content, f"ORDERS_{msg_id}.xml")
+        orders_xml, orders_msg_id, porders_num = xml_builder.generate_orders_from_porders(xml_str)
+    except ValueError as exc:
+        logger.error("[Listener] Ошибка формирования ORDERS из PORDERS %s: %s", msg_id, exc)
+        return
+
+    order_number, order_date = _extract_order_meta(orders_xml)
+    try:
+        resp = send_message(box_id, cfg, token, dl, orders_xml,
+                            f"ORDERS_{orders_msg_id}.xml")
         doc_circ_id = resp.get("DocumentCirculationId", "")
         message_id  = resp.get("MessageId", "")
-        logger.info("Ответ:\n%s", json.dumps(resp, indent=2, ensure_ascii=False))
+        logger.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен (CircId: %s)",
+                    porders_num, order_number, doc_circ_id)
         store.save_orders(
             order_number=order_number, order_date=order_date,
-            buyer_gln=TEST_SENDER_GLN, seller_gln=recipient_gln,
-            box_id=box_id, xml_content=xml_content,
+            buyer_gln="", seller_gln="",
+            box_id=box_id, xml_content=orders_xml,
             doc_circ_id=doc_circ_id, message_id=message_id,
         )
-        open_monitoring(resp, cfg)
     except RuntimeError as exc:
-        logger.error("Ошибка отправки: %s", exc)
+        logger.error("[Listener] Ошибка отправки ORDERS для PORDERS %s: %s",
+                     porders_num, exc)
 
-    pause()
+
+def _listener_handle_desadv(msg_id: str, box_id: str,
+                             cfg: AppConfig, token: str) -> None:
+    """Получить DESADV, сгенерировать RECADV без расхождений и отправить."""
+    try:
+        xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
+    except RuntimeError as exc:
+        logger.error("[Listener] Не удалось получить DESADV %s: %s", msg_id, exc)
+        return
+
+    try:
+        recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
+    except (ValueError, Exception) as exc:
+        logger.error("[Listener] Ошибка формирования RECADV для DESADV %s: %s", msg_id, exc)
+        return
+
+    try:
+        resp = send_message(box_id, cfg, token, dl, recadv_xml,
+                            f"RECADV_{recadv_number}.xml")
+        doc_circ_id = resp.get("DocumentCirculationId", "")
+        logger.info("[Listener] ✅ DESADV %s → RECADV %s отправлен (CircId: %s)",
+                    msg_id, recadv_number, doc_circ_id)
+    except RuntimeError as exc:
+        logger.error("[Listener] Ошибка отправки RECADV для DESADV %s: %s",
+                     msg_id, exc)
+
+
+def _listener_process_events(events: list[dict], box_id: str,
+                              cfg: AppConfig, token: str) -> None:
+    """Обработать список событий: реагировать на PORDERS и DESADV."""
+    for event in events:
+        if event.get("EventType") != "NewInboxMessage":
+            continue
+        content    = event.get("EventContent") or {}
+        inbox_meta = content.get("InboxMessageMeta") or {}
+        msg_id     = inbox_meta.get("MessageId", "")
+        doc_details = inbox_meta.get("DocumentDetails") or {}
+        doc_type   = (doc_details.get("DocumentType") or "").upper()
+
+        if not msg_id:
+            continue
+
+        if doc_type == "PORDERS":
+            logger.info("[Listener] 📥 Получен PORDERS (msg_id=%s)", msg_id)
+            _listener_handle_porders(msg_id, box_id, cfg, token)
+
+        elif doc_type == "DESADV":
+            logger.info("[Listener] 📥 Получен DESADV (msg_id=%s)", msg_id)
+            _listener_handle_desadv(msg_id, box_id, cfg, token)
+
+        elif doc_type in ("UNKNOWN", ""):
+            # Неизвестный тип — попробуем прочитать и определить сами
+            try:
+                xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
+                root_e  = ET.fromstring(xml_str)
+                ih      = root_e.find("interchangeHeader")
+                if ih is not None:
+                    actual = (ih.findtext("documentType") or "").strip().upper()
+                    if actual == "PORDERS":
+                        logger.info("[Listener] 📥 Получен PORDERS (определён вручную, msg_id=%s)", msg_id)
+                        _listener_handle_porders.__wrapped__ = True
+                        # Передаём уже загруженный XML напрямую
+                        try:
+                            orders_xml, orders_msg_id, porders_num = xml_builder.generate_orders_from_porders(xml_str)
+                            order_number, order_date = _extract_order_meta(orders_xml)
+                            resp = send_message(box_id, cfg, token, dl, orders_xml,
+                                                f"ORDERS_{orders_msg_id}.xml")
+                            logger.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен",
+                                        porders_num, order_number)
+                            store.save_orders(
+                                order_number=order_number, order_date=order_date,
+                                buyer_gln="", seller_gln="",
+                                box_id=box_id, xml_content=orders_xml,
+                                doc_circ_id=resp.get("DocumentCirculationId", ""),
+                                message_id=resp.get("MessageId", ""),
+                            )
+                        except Exception as exc2:
+                            logger.error("[Listener] Ошибка обработки PORDERS: %s", exc2)
+
+                    elif actual == "DESADV":
+                        logger.info("[Listener] 📥 Получен DESADV (определён вручную, msg_id=%s)", msg_id)
+                        try:
+                            recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
+                            resp = send_message(box_id, cfg, token, dl, recadv_xml,
+                                                f"RECADV_{recadv_number}.xml")
+                            logger.info("[Listener] ✅ DESADV %s → RECADV %s отправлен",
+                                        msg_id, recadv_number)
+                        except Exception as exc2:
+                            logger.error("[Listener] Ошибка обработки DESADV: %s", exc2)
+            except Exception:
+                pass
+
+
+def mode_listener(cfg: AppConfig, token: str) -> None:
+    """
+    Режим прослушивания (режим 3).
+
+    Бесконечный цикл опроса входящих сообщений:
+      • При получении PORDERS  → автоматически формирует и отправляет ORDERS
+      • При получении DESADV   → автоматически формирует и отправляет RECADV
+                                 (без расхождений: принятое = отгруженному)
+
+    Состояние (последний обработанный event_id) сохраняется в listener_state.json
+    и восстанавливается при следующем запуске.
+    Выход — Ctrl+C.
+    """
+    if not cfg.party_id:
+        logger.error("party_id не задан. Запустите python setup.py.")
+        pause(); return
+
+    try:
+        box_id = get_box_id(cfg.party_id, cfg, token, dl)
+    except RuntimeError as exc:
+        logger.error("Ошибка получения boxId: %s", exc)
+        pause(); return
+
+    state        = _listener_load_state()
+    last_event_id = state.get(box_id, "")
+
+    print(f"\n  ╔══════════════════════════════════════════════════╗")
+    print(f"  ║          Режим прослушивания активен             ║")
+    print(f"  ╠══════════════════════════════════════════════════╣")
+    print(f"  ║  Ящик  : {box_id:<40}║")
+    print(f"  ║  Опрос : каждые {_LISTENER_POLL_INTERVAL} сек{' ':<29}║")
+    print(f"  ║  Выход : Ctrl+C{' ':<34}║")
+    print(f"  ╚══════════════════════════════════════════════════╝\n")
+
+    logger.info("[Listener] Старт. box_id=%s, last_event_id=%s",
+                box_id, last_event_id or "(начало)")
+
+    try:
+        while True:
+            try:
+                # Первый опрос — либо с сохранённого event_id, либо c сегодняшней даты
+                if last_event_id:
+                    batch = get_events(box_id, cfg, token, dl,
+                                       exclusive_event_id=last_event_id)
+                else:
+                    from datetime import date as _date
+                    batch = get_events_from(box_id, cfg, token, dl,
+                                            from_date=str(_date.today()))
+
+                events      = batch.get("Events") or []
+                new_last_id = batch.get("LastEventId", last_event_id)
+
+                # Дочитываем оставшиеся страницы
+                while new_last_id and new_last_id != last_event_id and len(events) < 2000:
+                    extra  = get_events(box_id, cfg, token, dl,
+                                        exclusive_event_id=new_last_id)
+                    chunk  = extra.get("Events") or []
+                    events.extend(chunk)
+                    new_last_id = extra.get("LastEventId", new_last_id)
+                    if not chunk:
+                        break
+
+                if events:
+                    logger.info("[Listener] Новых событий: %d", len(events))
+                    _listener_process_events(events, box_id, cfg, token)
+                    last_event_id = new_last_id
+                    state[box_id]  = last_event_id
+                    _listener_save_state(state)
+                else:
+                    logger.debug("[Listener] Нет новых событий.")
+
+            except RuntimeError as exc:
+                logger.error("[Listener] Ошибка опроса: %s", exc)
+
+            _time.sleep(_LISTENER_POLL_INTERVAL)
+
+    except KeyboardInterrupt:
+        print("\n\n  [Listener] Остановлено пользователем.")
+        logger.info("[Listener] Остановлен (Ctrl+C).")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -889,7 +1041,7 @@ MENU = """
 ╠══════════════════════════════════════════════════╣
 ║  1. Сгенерировать ORDERS из конфига и отправить  ║
 ║  2. Отправить существующий XML-файл              ║
-║  3. Тестовый ORDERS (произвольные GLN)           ║
+║  3. Прослушивание (авто-ответ PORDERS / DESADV)  ║
 ║  4. Работа с каталогами в TradeItemTableLayout   ║
 ║  ────────────────────────────────────────────────║
 ║  5. RECADV — отправить уведомление о приёмке     ║
@@ -903,7 +1055,7 @@ MENU = """
 HANDLERS = {
     "1": mode_generate_and_send,
     "2": mode_send_existing,
-    "3": mode_test_orders,
+    "3": mode_listener,
     "4": mode_pricat,
     "5": mode_recadv,
     "6": mode_storage,

@@ -150,6 +150,41 @@ def collect_accepted_quantities(desadv: DesadvData) -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Автоматическое принятие без расхождений (для режима прослушивания)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def collect_accepted_quantities_auto(desadv: DesadvData) -> list[dict]:
+    """
+    Автоматически принять все позиции без расхождений
+    (acceptedQuantity == despatchedQuantity для каждой позиции).
+    Используется в режиме автоматического прослушивания.
+    """
+    return [
+        {
+            "gtin":                li["gtin"],
+            "internal_buyer_code": li["internal_buyer_code"],
+            "description":         li["description"],
+            "despatched_qty":      li["despatched_qty"],
+            "accepted_qty":        li["despatched_qty"],   # нет расхождений
+            "uom":                 li["despatched_uom"],
+            "net_price":           li["net_price"],
+            "vat_rate":            li["vat_rate"],
+        }
+        for li in desadv.line_items
+    ]
+
+
+def build_recadv_from_desadv_xml(xml_str: str) -> tuple[str, str]:
+    """
+    Удобная обёртка: разобрать DESADV XML и сформировать RECADV без расхождений.
+    Возвращает (recadv_xml_string, recadv_number).
+    """
+    desadv_data = DesadvData(xml_str)
+    line_items  = collect_accepted_quantities_auto(desadv_data)
+    return build_recadv_xml(desadv=desadv_data, line_items=line_items)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Построитель XML RECADV
 # ─────────────────────────────────────────────────────────────────────────────
 

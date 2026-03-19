@@ -135,6 +135,83 @@ def generate_pricat_xml(version, supplier_gln, buyer_gln, line_items,
     return xml_str, filename
 
 
+def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
+    """
+    Разобрать входящий PORDERS и сгенерировать ORDERS в ответ.
+
+    Логика маппинга:
+      - ORDERS buyer_gln  = PORDERS interchangeHeader/sender  (тот, кто прислал PORDERS)
+      - ORDERS seller_gln = PORDERS interchangeHeader/recipient (мы)
+      - proposalOrdersIdentificator → ссылка на исходный PORDERS
+      - line items копируются (gtin, internalBuyerCode, description,
+        requestedQuantity, netPrice, vATRate)
+
+    Возвращает (xml_string, orders_msg_id, porders_number).
+    """
+    try:
+        root_po = ET.fromstring(porders_xml_str)
+    except ET.ParseError as exc:
+        raise ValueError(f"Невалидный XML PORDERS: {exc}") from exc
+
+    ih = root_po.find("interchangeHeader")
+    if ih is None:
+        raise ValueError("Элемент <interchangeHeader> не найден в PORDERS")
+
+    buyer_gln  = (ih.findtext("sender")    or "").strip()
+    seller_gln = (ih.findtext("recipient") or "").strip()
+
+    po = root_po.find("proposalOrder")
+    if po is None:
+        raise ValueError("Элемент <proposalOrder> не найден в PORDERS")
+
+    porders_number = (po.get("number") or "").strip()
+    porders_date   = (po.get("date")   or "").strip()
+
+    # Собираем позиции из PORDERS
+    line_items = []
+    for li in po.findall(".//lineItems/lineItem"):
+        rq_elem = li.find("requestedQuantity")
+        rq_val  = (rq_elem.text or "0").strip()        if rq_elem is not None else "0"
+        rq_uom  = rq_elem.get("unitOfMeasure", "PCE") if rq_elem is not None else "PCE"
+
+        def _t(tag):
+            node = li.find(tag)
+            return (node.text or "").strip() if node is not None else ""
+
+        line_items.append({
+            "gtin":               _t("gtin"),
+            "internal_buyer_code": _t("internalBuyerCode"),
+            "description":         _t("description"),
+            "requested_quantity":  rq_val,
+            "unit_of_measure":     rq_uom,
+            "net_price":           _t("netPrice"),
+            "vat_rate":            _t("vATRate"),
+        })
+
+    # Генерируем базовый ORDERS
+    xml_str, msg_id = generate_orders_xml(
+        buyer_gln=buyer_gln,
+        seller_gln=seller_gln,
+        line_items=line_items,
+    )
+
+    # Вставляем proposalOrdersIdentificator после открывающего тега <order>
+    if porders_number:
+        root_ord = ET.fromstring(xml_str.split("?>", 1)[-1])
+        order_elem = root_ord.find("order")
+        if order_elem is not None:
+            poi = ET.Element("proposalOrdersIdentificator")
+            poi.set("number", porders_number)
+            poi.set("date",   porders_date)
+            order_elem.insert(0, poi)
+            ET.indent(root_ord, space="  ")
+            xml_str = '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(
+                root_ord, encoding="unicode"
+            )
+
+    return xml_str, msg_id, porders_number
+
+
 def input_full_line_item_manually(item_number):
     """
     Ask user to input all possible fields for a line item (based on the ORDERS template).
