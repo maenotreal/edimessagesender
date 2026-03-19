@@ -12,6 +12,7 @@ env/
 # Runtime-файлы приложения (генерируются при запуске)
 edi_config.json
 edi_store.json
+listener_state.json
 .token_cache.json
 edi_documents/
 logs/
