@@ -32,6 +32,11 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+# Сценарии обработки RECADV (из additionalIdentificator в PORDERS)
+SCENARIO_NOCHANGE = "NOCHANGE"   # acceptedQty = despatchedQty (по умолчанию)
+SCENARIO_REJECT   = "REJECT"     # acceptedQty = 0 (отклонить все позиции)
+SCENARIO_ADD_QTY  = "ADD_QTY"    # acceptedQty = despatchedQty * 1.2 (+20%)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Парсинг DESADV
@@ -153,34 +158,51 @@ def collect_accepted_quantities(desadv: DesadvData) -> list[dict]:
 # Автоматическое принятие без расхождений (для режима прослушивания)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def collect_accepted_quantities_auto(desadv: DesadvData) -> list[dict]:
+def collect_accepted_quantities_auto(desadv: DesadvData,
+                                     scenario: str = SCENARIO_NOCHANGE) -> list[dict]:
     """
-    Автоматически принять все позиции без расхождений
-    (acceptedQuantity == despatchedQuantity для каждой позиции).
-    Используется в режиме автоматического прослушивания.
+    Автоматически рассчитать принятые количества по сценарию из PORDERS.
+
+    NOCHANGE : acceptedQty = despatchedQty  (без расхождений)
+    REJECT   : acceptedQty = 0             (все позиции отклонены)
+    ADD_QTY  : acceptedQty = despatchedQty * 1.2  (+20%)
     """
-    return [
-        {
+    result = []
+    for li in desadv.line_items:
+        dq = li["despatched_qty"]
+        scenario_upper = (scenario or SCENARIO_NOCHANGE).upper()
+
+        if scenario_upper == SCENARIO_REJECT:
+            accepted = "0"
+        elif scenario_upper == SCENARIO_ADD_QTY:
+            try:
+                accepted = f"{float(dq) * 1.2:g}"
+            except (ValueError, TypeError):
+                accepted = dq
+        else:  # NOCHANGE или любой неизвестный
+            accepted = dq
+
+        result.append({
             "gtin":                li["gtin"],
             "internal_buyer_code": li["internal_buyer_code"],
             "description":         li["description"],
-            "despatched_qty":      li["despatched_qty"],
-            "accepted_qty":        li["despatched_qty"],   # нет расхождений
+            "despatched_qty":      dq,
+            "accepted_qty":        accepted,
             "uom":                 li["despatched_uom"],
             "net_price":           li["net_price"],
             "vat_rate":            li["vat_rate"],
-        }
-        for li in desadv.line_items
-    ]
+        })
+    return result
 
 
-def build_recadv_from_desadv_xml(xml_str: str) -> tuple[str, str]:
+def build_recadv_from_desadv_xml(xml_str: str,
+                                  scenario: str = SCENARIO_NOCHANGE) -> tuple[str, str]:
     """
-    Удобная обёртка: разобрать DESADV XML и сформировать RECADV без расхождений.
+    Удобная обёртка: разобрать DESADV XML и сформировать RECADV по сценарию.
     Возвращает (recadv_xml_string, recadv_number).
     """
     desadv_data = DesadvData(xml_str)
-    line_items  = collect_accepted_quantities_auto(desadv_data)
+    line_items  = collect_accepted_quantities_auto(desadv_data, scenario=scenario)
     return build_recadv_xml(desadv=desadv_data, line_items=line_items)
 
 

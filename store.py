@@ -83,6 +83,7 @@ def save_orders(
     xml_content: str,
     doc_circ_id: str = "",
     message_id: str = "",
+    scenario: str = "",
 ) -> str:
     """Сохранить отправленный ORDERS. Возвращает внутренний id."""
     rec_id   = str(uuid.uuid4())
@@ -101,6 +102,7 @@ def save_orders(
         "message_id":     message_id,   # MessageId из ответа SendMessage
         "xml_file":       str(xml_file.relative_to(_BASE_DIR)),
         "orders_status":  STATUS_PENDING,
+        "scenario":       scenario,     # REJECT | NOCHANGE | ADD_QTY | ""
         "desadv":         [],
     }
     with _store_lock:
@@ -118,6 +120,13 @@ def get_all_orders() -> list[dict]:
 def get_order_by_id(order_id: str) -> dict | None:
     for o in get_all_orders():
         if o["id"] == order_id:
+            return o
+    return None
+
+
+def get_order_by_number(order_number: str) -> dict | None:
+    for o in get_all_orders():
+        if o.get("order_number") == order_number:
             return o
     return None
 

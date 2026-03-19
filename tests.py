@@ -898,21 +898,21 @@ class TestXmlBuilder(unittest.TestCase):
 
     def test_orders_from_porders_sender_is_our_box(self):
         """ORDERS sender должен совпадать с ящиком отправки (PORDERS recipient = мы)."""
-        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        xml, _, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
         root = ET.fromstring(xml)
         # PORDERS recipient (мы) → ORDERS sender
         self.assertEqual(root.findtext("interchangeHeader/sender"), "2977724924821")
 
     def test_orders_from_porders_recipient_is_seller(self):
         """ORDERS recipient должен быть продавцом (PORDERS sender)."""
-        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        xml, _, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
         root = ET.fromstring(xml)
         # PORDERS sender (продавец) → ORDERS recipient
         self.assertEqual(root.findtext("interchangeHeader/recipient"), "2919128316475")
 
     def test_orders_from_porders_proposal_identificator(self):
         """В ORDERS должна быть ссылка на исходный PORDERS."""
-        xml, _, porders_num = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        xml, _, porders_num, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
         root = ET.fromstring(xml)
         poi = root.find(".//proposalOrdersIdentificator")
         self.assertIsNotNone(poi)
@@ -921,12 +921,53 @@ class TestXmlBuilder(unittest.TestCase):
 
     def test_orders_from_porders_line_items_copied(self):
         """Позиции из PORDERS должны попасть в ORDERS."""
-        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        xml, _, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
         root = ET.fromstring(xml)
         li = root.find(".//lineItem")
         self.assertIsNotNone(li)
         self.assertEqual(li.findtext("gtin"), "0000001")
         self.assertEqual(li.findtext("internalBuyerCode"), "100")
+
+    def test_orders_from_porders_scenario_empty_when_absent(self):
+        """Если additionalIdentificator отсутствует — scenario пустая строка."""
+        _, _, _, scenario = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        self.assertEqual(scenario, "")
+
+    _PORDERS_XML_REJECT = '''<?xml version="1.0" encoding="utf-8"?>
+<eDIMessage id="po-002">
+  <interchangeHeader>
+    <sender>2919128316475</sender>
+    <recipient>2977724924821</recipient>
+    <documentType>PORDERS</documentType>
+  </interchangeHeader>
+  <proposalOrder number="PORD-002" date="2026-03-19">
+    <seller>
+      <gln>2919128316475</gln>
+      <additionalIdentificator>REJECT</additionalIdentificator>
+    </seller>
+    <lineItems>
+      <lineItem>
+        <gtin>0000001</gtin>
+        <requestedQuantity unitOfMeasure="PCE">10.000</requestedQuantity>
+      </lineItem>
+    </lineItems>
+  </proposalOrder>
+</eDIMessage>'''
+
+    _PORDERS_XML_ADD_QTY = _PORDERS_XML_REJECT.replace(
+        "<additionalIdentificator>REJECT</additionalIdentificator>",
+        "<additionalIdentificator>ADD_QTY</additionalIdentificator>"
+    ).replace("PORD-002", "PORD-003")
+
+    def test_orders_from_porders_scenario_reject(self):
+        """PORDERS с REJECT → scenario == 'REJECT'."""
+        _, _, _, scenario = self.xb.generate_orders_from_porders(self._PORDERS_XML_REJECT)
+        self.assertEqual(scenario, "REJECT")
+
+    def test_orders_from_porders_scenario_add_qty(self):
+        """PORDERS с ADD_QTY → scenario == 'ADD_QTY'."""
+        _, _, _, scenario = self.xb.generate_orders_from_porders(self._PORDERS_XML_ADD_QTY)
+        self.assertEqual(scenario, "ADD_QTY")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1075,6 +1116,39 @@ class TestRecadvBuilder(unittest.TestCase):
         ov = root.find(".//overshippedQuantity")
         self.assertIsNotNone(ov)
         self.assertAlmostEqual(float(ov.text), 2.5)
+
+    # ── collect_accepted_quantities_auto — сценарии ───────────────────────────
+
+    def test_scenario_nochange_accepted_equals_despatched(self):
+        items = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_NOCHANGE)
+        self.assertEqual(items[0]["accepted_qty"], items[0]["despatched_qty"])
+
+    def test_scenario_reject_accepted_is_zero(self):
+        items = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_REJECT)
+        self.assertEqual(items[0]["accepted_qty"], "0")
+
+    def test_scenario_add_qty_accepted_is_120_percent(self):
+        items = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_ADD_QTY)
+        expected = float(items[0]["despatched_qty"]) * 1.2
+        self.assertAlmostEqual(float(items[0]["accepted_qty"]), expected)
+
+    def test_scenario_default_is_nochange(self):
+        """Без явного сценария — поведение как NOCHANGE."""
+        items_default  = self.rb.collect_accepted_quantities_auto(self._desadv())
+        items_nochange = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_NOCHANGE)
+        self.assertEqual(items_default[0]["accepted_qty"], items_nochange[0]["accepted_qty"])
+
+    def test_scenario_reject_adds_not_delivered_in_xml(self):
+        """REJECT: acceptedQty=0 → notDeliveredQuantity должен быть в XML."""
+        items = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_REJECT)
+        xml, _ = self.rb.build_recadv_xml(self._desadv(), items)
+        self.assertIn("notDeliveredQuantity", xml)
+
+    def test_scenario_add_qty_adds_overshipped_in_xml(self):
+        """ADD_QTY: acceptedQty > despatchedQty → overshippedQuantity в XML."""
+        items = self.rb.collect_accepted_quantities_auto(self._desadv(), self.rb.SCENARIO_ADD_QTY)
+        xml, _ = self.rb.build_recadv_xml(self._desadv(), items)
+        self.assertIn("overshippedQuantity", xml)
 
     def test_accepted_quantity_in_xml(self):
         xml, _ = self.rb.build_recadv_xml(self._desadv(), self._accepted("9.000"))

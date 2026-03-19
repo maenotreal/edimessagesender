@@ -145,8 +145,10 @@ def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
       - proposalOrdersIdentificator → ссылка на исходный PORDERS
       - line items копируются (gtin, internalBuyerCode, description,
         requestedQuantity, netPrice, vATRate)
+      - scenario извлекается из proposalOrder/seller/additionalIdentificator
 
-    Возвращает (xml_string, orders_msg_id, porders_number).
+    Возвращает (xml_string, orders_msg_id, porders_number, scenario).
+    Scenario: "REJECT" | "NOCHANGE" | "ADD_QTY" | "" (пусто = NOCHANGE).
     """
     try:
         root_po = ET.fromstring(porders_xml_str)
@@ -168,6 +170,10 @@ def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
 
     porders_number = (po.get("number") or "").strip()
     porders_date   = (po.get("date")   or "").strip()
+
+    # Сценарий обработки RECADV из seller/additionalIdentificator
+    scenario_node = po.find("seller/additionalIdentificator")
+    scenario = (scenario_node.text or "").strip().upper() if scenario_node is not None else ""
 
     # Собираем позиции из PORDERS
     line_items = []
@@ -211,7 +217,7 @@ def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
                 root_ord, encoding="unicode"
             )
 
-    return xml_str, msg_id, porders_number
+    return xml_str, msg_id, porders_number, scenario
 
 
 def input_full_line_item_manually(item_number):

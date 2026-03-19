@@ -22,6 +22,7 @@ dist/
 build/
 *.egg-info/
 *.spec
+*.zip
 
 # OS
 Thumbs.db

@@ -451,10 +451,13 @@ def _listener_handle_porders(msg_id: str, box_id: str,
         return
 
     try:
-        orders_xml, orders_msg_id, porders_num = xml_builder.generate_orders_from_porders(xml_str)
+        orders_xml, orders_msg_id, porders_num, scenario = xml_builder.generate_orders_from_porders(xml_str)
     except ValueError as exc:
         _ll.error("[Listener] Ошибка формирования ORDERS из PORDERS %s: %s", msg_id, exc)
         return
+
+    if scenario:
+        _ll.info("[Listener] Сценарий RECADV для PORDERS %s: %s", porders_num, scenario)
 
     order_number, order_date = _extract_order_meta(orders_xml)
     try:
@@ -469,23 +472,46 @@ def _listener_handle_porders(msg_id: str, box_id: str,
             buyer_gln="", seller_gln="",
             box_id=box_id, xml_content=orders_xml,
             doc_circ_id=doc_circ_id, message_id=message_id,
+            scenario=scenario,
         )
     except RuntimeError as exc:
         _ll.error("[Listener] Ошибка отправки ORDERS для PORDERS %s: %s",
                      porders_num, exc)
 
 
+def _listener_get_scenario_for_desadv(xml_str: str) -> str:
+    """Найти сохранённый сценарий RECADV по originOrder из DESADV."""
+    try:
+        root_da = ET.fromstring(xml_str)
+        da = root_da.find("despatchAdvice")
+        if da is not None:
+            oo = da.find("originOrder")
+            if oo is not None:
+                order_num = (oo.get("number") or "").strip()
+                order = store.get_order_by_number(order_num)
+                if order:
+                    scenario = (order.get("scenario") or "").strip().upper()
+                    if scenario:
+                        return scenario
+    except Exception as exc:
+        _ll.warning("[Listener] Не удалось определить сценарий из DESADV: %s", exc)
+    return recadv_builder.SCENARIO_NOCHANGE
+
+
 def _listener_handle_desadv(msg_id: str, box_id: str,
                              cfg: AppConfig, token: str) -> None:
-    """Получить DESADV, сгенерировать RECADV без расхождений и отправить."""
+    """Получить DESADV, сгенерировать RECADV по сценарию из PORDERS и отправить."""
     try:
         xml_str = get_inbox_message_xml(box_id, msg_id, cfg, token, dl)
     except RuntimeError as exc:
         _ll.error("[Listener] Не удалось получить DESADV %s: %s", msg_id, exc)
         return
 
+    scenario = _listener_get_scenario_for_desadv(xml_str)
+    _ll.info("[Listener] RECADV сценарий для DESADV %s: %s", msg_id, scenario)
+
     try:
-        recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
+        recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str, scenario)
     except (ValueError, Exception) as exc:
         _ll.error("[Listener] Ошибка формирования RECADV для DESADV %s: %s", msg_id, exc)
         return
@@ -534,21 +560,20 @@ def _listener_process_events(events: list[dict], box_id: str,
                     actual = (ih.findtext("documentType") or "").strip().upper()
                     if actual == "PORDERS":
                         _ll.info("[Listener] 📥 Получен PORDERS (определён вручную, msg_id=%s)", msg_id)
-                        _listener_handle_porders.__wrapped__ = True
-                        # Передаём уже загруженный XML напрямую
                         try:
-                            orders_xml, orders_msg_id, porders_num = xml_builder.generate_orders_from_porders(xml_str)
+                            orders_xml, orders_msg_id, porders_num, scenario = xml_builder.generate_orders_from_porders(xml_str)
                             order_number, order_date = _extract_order_meta(orders_xml)
                             resp = send_message(box_id, cfg, token, dl, orders_xml,
                                                 f"ORDERS_{orders_msg_id}.xml")
-                            _ll.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен",
-                                        porders_num, order_number)
+                            _ll.info("[Listener] ✅ PORDERS %s → ORDERS %s отправлен (сценарий: %s)",
+                                        porders_num, order_number, scenario or "NOCHANGE")
                             store.save_orders(
                                 order_number=order_number, order_date=order_date,
                                 buyer_gln="", seller_gln="",
                                 box_id=box_id, xml_content=orders_xml,
                                 doc_circ_id=resp.get("DocumentCirculationId", ""),
                                 message_id=resp.get("MessageId", ""),
+                                scenario=scenario,
                             )
                         except Exception as exc2:
                             _ll.error("[Listener] Ошибка обработки PORDERS: %s", exc2)
@@ -556,11 +581,12 @@ def _listener_process_events(events: list[dict], box_id: str,
                     elif actual == "DESADV":
                         _ll.info("[Listener] 📥 Получен DESADV (определён вручную, msg_id=%s)", msg_id)
                         try:
-                            recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str)
+                            scenario = _listener_get_scenario_for_desadv(xml_str)
+                            recadv_xml, recadv_number = recadv_builder.build_recadv_from_desadv_xml(xml_str, scenario)
                             resp = send_message(box_id, cfg, token, dl, recadv_xml,
                                                 f"RECADV_{recadv_number}.xml")
-                            _ll.info("[Listener] ✅ DESADV %s → RECADV %s отправлен",
-                                        msg_id, recadv_number)
+                            _ll.info("[Listener] ✅ DESADV %s → RECADV %s отправлен (сценарий: %s)",
+                                        msg_id, recadv_number, scenario)
                         except Exception as exc2:
                             _ll.error("[Listener] Ошибка обработки DESADV: %s", exc2)
             except Exception:
