@@ -140,8 +140,8 @@ def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
     Разобрать входящий PORDERS и сгенерировать ORDERS в ответ.
 
     Логика маппинга:
-      - ORDERS buyer_gln  = PORDERS interchangeHeader/sender  (тот, кто прислал PORDERS)
-      - ORDERS seller_gln = PORDERS interchangeHeader/recipient (мы)
+      - ORDERS sender (buyer_gln)  = PORDERS interchangeHeader/recipient (мы)
+      - ORDERS recipient (seller_gln) = PORDERS interchangeHeader/sender (тот, кто прислал PORDERS)
       - proposalOrdersIdentificator → ссылка на исходный PORDERS
       - line items копируются (gtin, internalBuyerCode, description,
         requestedQuantity, netPrice, vATRate)
@@ -157,8 +157,10 @@ def generate_orders_from_porders(porders_xml_str: str) -> tuple[str, str, str]:
     if ih is None:
         raise ValueError("Элемент <interchangeHeader> не найден в PORDERS")
 
-    buyer_gln  = (ih.findtext("sender")    or "").strip()
-    seller_gln = (ih.findtext("recipient") or "").strip()
+    # PORDERS sender = продавец (кто прислал предзаказ)
+    # PORDERS recipient = мы (покупатель, отправляем ORDERS со своего ящика)
+    seller_gln = (ih.findtext("sender")    or "").strip()
+    buyer_gln  = (ih.findtext("recipient") or "").strip()
 
     po = root_po.find("proposalOrder")
     if po is None:

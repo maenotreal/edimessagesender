@@ -873,6 +873,61 @@ class TestXmlBuilder(unittest.TestCase):
         root = ET.fromstring(xml)
         self.assertEqual(len(root.findall("lineItem")), 2)
 
+    # ── generate_orders_from_porders ─────────────────────────────────────────
+
+    _PORDERS_XML = '''<?xml version="1.0" encoding="utf-8"?>
+<eDIMessage id="po-001">
+  <interchangeHeader>
+    <sender>2919128316475</sender>
+    <recipient>2977724924821</recipient>
+    <documentType>PORDERS</documentType>
+  </interchangeHeader>
+  <proposalOrder number="PORD-001" date="2026-03-19">
+    <lineItems>
+      <lineItem>
+        <gtin>0000001</gtin>
+        <internalBuyerCode>100</internalBuyerCode>
+        <description>Товар тест</description>
+        <requestedQuantity unitOfMeasure="PCE">5.000</requestedQuantity>
+        <netPrice>100.00</netPrice>
+        <vATRate>20</vATRate>
+      </lineItem>
+    </lineItems>
+  </proposalOrder>
+</eDIMessage>'''
+
+    def test_orders_from_porders_sender_is_our_box(self):
+        """ORDERS sender должен совпадать с ящиком отправки (PORDERS recipient = мы)."""
+        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        root = ET.fromstring(xml)
+        # PORDERS recipient (мы) → ORDERS sender
+        self.assertEqual(root.findtext("interchangeHeader/sender"), "2977724924821")
+
+    def test_orders_from_porders_recipient_is_seller(self):
+        """ORDERS recipient должен быть продавцом (PORDERS sender)."""
+        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        root = ET.fromstring(xml)
+        # PORDERS sender (продавец) → ORDERS recipient
+        self.assertEqual(root.findtext("interchangeHeader/recipient"), "2919128316475")
+
+    def test_orders_from_porders_proposal_identificator(self):
+        """В ORDERS должна быть ссылка на исходный PORDERS."""
+        xml, _, porders_num = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        root = ET.fromstring(xml)
+        poi = root.find(".//proposalOrdersIdentificator")
+        self.assertIsNotNone(poi)
+        self.assertEqual(poi.get("number"), "PORD-001")
+        self.assertEqual(porders_num, "PORD-001")
+
+    def test_orders_from_porders_line_items_copied(self):
+        """Позиции из PORDERS должны попасть в ORDERS."""
+        xml, _, _ = self.xb.generate_orders_from_porders(self._PORDERS_XML)
+        root = ET.fromstring(xml)
+        li = root.find(".//lineItem")
+        self.assertIsNotNone(li)
+        self.assertEqual(li.findtext("gtin"), "0000001")
+        self.assertEqual(li.findtext("internalBuyerCode"), "100")
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TestRecadvBuilder
